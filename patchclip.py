@@ -33,6 +33,7 @@ def parse_args():
 
 # ---------------- dataset loaders ----------------
 def make_loaders(name, data_root, batch_size):
+    print("make_loaders")
     raw_tf = transforms.Compose([transforms.Resize((224,224)), transforms.ToTensor()])
     norm_tf = transforms.Compose([transforms.Resize((224,224)),
                                   transforms.ToTensor(),
@@ -89,6 +90,7 @@ def collect_samples(raw_loader, max_samples):
 
 # ----------------- vectorized patch application (GPU) -----------------
 def apply_patch_batch_tensor(imgs_tensor, patch_tensor, scale=0.3, random_place=False):
+    print("apply_patch_batch_tensor")
     # imgs_tensor: (B,3,224,224) in 0-1 on device
     B, C, H, W = imgs_tensor.shape
     # resize patch once
@@ -111,6 +113,7 @@ def apply_patch_batch_tensor(imgs_tensor, patch_tensor, scale=0.3, random_place=
 
 # ---------------- main evaluation ----------------
 def evaluate_dataset(ds_name, clip_model, clip_device, args):
+    print("evaluate1")
     print(f'\n=== Dataset: {ds_name} ===')
     raw_loader, norm_loader, classes = make_loaders(ds_name, args.data_root, args.batch_size)
     # make text features
@@ -199,8 +202,10 @@ def evaluate_dataset(ds_name, clip_model, clip_device, args):
     print(f'Adv acc: {adv_acc:.2f}%')
 
     return f"{ds_name}\tclean_acc: {clean_acc:.2f}%\tadv_acc: {adv_acc:.2f}%"
+    
 
 def main():
+    print("main")
     args = parse_args()
     # dataset list
     datasets_list = ['Food101','CIFAR100','OxfordIIITPet','DTD','STL10']
