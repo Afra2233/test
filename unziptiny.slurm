@@ -8,6 +8,7 @@
 
 
 module load anaconda3/2022.05
+cd /scratch/hpc/07/zhang303/data
 
 unzip tiny-imagenet-200.zip
 
