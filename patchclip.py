@@ -1,241 +1,226 @@
+#!/usr/bin/env python3
 """
-eval_clip_advpatch.py
-依赖: torch, torchvision, clip (OpenAI), adversarial-robustness-toolbox (ART), tqdm
+eval_clip_advpatch_sampled.py
+加速版：每个数据集抽样用于 craft patch，批量化应用patch并评估 CLIP。
+依赖: torch, torchvision, clip (OpenAI), adversarial-robustness-toolbox (ART), tqdm, numpy
+
 用法示例:
-    python eval_clip_advpatch.py --batch_size 64 --device cuda
+    python eval_clip_advpatch_sampled.py --device cuda --batch_size 64 --max_iter 100 --sample_per_ds 200
+    python eval_clip_advpatch_sampled.py --dataset CIFAR100 --device cuda --batch_size 128 --max_iter 80 --sample_per_ds 100
 """
-
-import os
-import argparse
+import argparse, os, time
 from tqdm import tqdm
-import torch
-import clip
-from torchvision import transforms
-import torchvision.datasets as datasets
-import torchvision
-import numpy as np
-
-# ART imports
+import torch, clip
+import torchvision, numpy as np
+from torchvision import transforms, datasets
+import torch.nn as nn
 from art.attacks.evasion import AdversarialPatch
 from art.estimators.classification import PyTorchClassifier
-import torch.nn as nn
 
-# --------- 参数 ----------
-parser = argparse.ArgumentParser()
-parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
-parser.add_argument('--batch_size', type=int, default=64)
-parser.add_argument('--patch_size', type=int, default=80, help='patch size in pixels (square)')
-parser.add_argument('--max_iter', type=int, default=200, help='ART adversarial patch iterations (可调)')
-parser.add_argument('--output', default='results.txt', help='保存结果')
-parser.add_argument('--data_root', default='./data', help='datasets 下载/存放目录')
-args = parser.parse_args()
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
+    p.add_argument('--batch_size', type=int, default=64)
+    p.add_argument('--patch_size', type=int, default=80)
+    p.add_argument('--max_iter', type=int, default=100, help='ART patch max iterations (craft)')
+    p.add_argument('--sample_per_ds', type=int, default=200, help='用于craft patch的每个数据集样本数（抽样）')
+    p.add_argument('--max_samples_global', type=int, default=None, help='若设置则为全局采样上限（覆盖 sample_per_ds）')
+    p.add_argument('--data_root', default='./data')
+    p.add_argument('--output', default='results_sampled.txt')
+    p.add_argument('--random_placement', action='store_true', help='在应用patch时随机放置（会慢一些）')
+    p.add_argument('--dataset', default=None, help='只跑单个数据集（如 CIFAR100），否则跑全部列表')
+    return p.parse_args()
 
-device = args.device
-batch_size = args.batch_size
-data_root = args.data_root
-
-# ---------- 工具：CLIP wrapper model ----------
-class CLIPWrapper(nn.Module):
-    def __init__(self, model, preprocess, device):
-        super().__init__()
-        self.model = model
-        self.preprocess = preprocess
-        self.device = device
-
-    def forward(self, x):
-        # x: batch of preprocessed images (tensor) already normalized consistent with CLIP
-        # returns logits over text tokens will be computed outside (see below).
-        # But ART classifier expects model(x) -> logits vector.
-        # We'll compute CLIP image features and compute logits vs a fixed set of text features
-        return self.model.encode_image(x)
-
-# ---------- helper: build dataset loaders ----------
-def get_dataset_loader(name):
-    # Returns (loader, class_names)
-    # transforms: resize->224 (CLIP's default input), center crop, to tensor, normalize with CLIP stats
-    preprocess = transforms.Compose([
-        transforms.Resize((224,224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=(0.48145466, 0.4578275, 0.40821073),
-                             std=(0.26862954, 0.26130258, 0.27577711))
-    ])
-
-    if name.lower() == 'cifar100':
-        ds = datasets.CIFAR100(root=data_root, train=False, download=True,
-                               transform=preprocess)
-        classes = ds.classes
-    elif name.lower() == 'food101':
-        ds = datasets.Food101(root=data_root, split='test', download=True, transform=preprocess)
-        classes = ds.classes
-    elif name.lower() == 'oxfordpet' or name.lower() == 'oxfordiiitpet':
-        ds = datasets.OxfordIIITPet(root=data_root, download=True, transform=preprocess, target_types='category')
-        # torchvision's OxfordIIITPet returns labels as indexes, map to names via classes attr not always present:
-        classes = sorted(list(set([ds.classes[i] if hasattr(ds,'classes') else str(i) for i in range(len(ds))])))
-        # safer approach: torchvision's doc: categories names stored in ds._labels? We'll keep simple:
-        # but for CLIP zero-shot, use ds.classes if exists else make numeric labels
-        if hasattr(ds, 'classes'):
-            classes = ds.classes
-        else:
+# ---------------- dataset loaders ----------------
+def make_loaders(name, data_root, batch_size):
+    raw_tf = transforms.Compose([transforms.Resize((224,224)), transforms.ToTensor()])
+    norm_tf = transforms.Compose([transforms.Resize((224,224)),
+                                  transforms.ToTensor(),
+                                  transforms.Normalize((0.48145466,0.4578275,0.40821073),
+                                                       (0.26862954,0.26130258,0.27577711))])
+    n = name.lower()
+    if n == 'cifar100':
+        ds_raw = datasets.CIFAR100(root=data_root, train=False, download=True, transform=raw_tf)
+        ds_norm = datasets.CIFAR100(root=data_root, train=False, download=False, transform=norm_tf)
+        classes = ds_norm.classes
+    elif n == 'food101':
+        ds_raw = datasets.Food101(root=data_root, split='test', download=True, transform=raw_tf)
+        ds_norm = datasets.Food101(root=data_root, split='test', download=False, transform=norm_tf)
+        classes = ds_norm.classes
+    elif n in ('oxfordpet', 'oxfordiiitpet'):
+        ds_raw = datasets.OxfordIIITPet(root=data_root, download=True, transform=raw_tf, target_types='category')
+        ds_norm = datasets.OxfordIIITPet(root=data_root, download=False, transform=norm_tf, target_types='category')
+        try:
+            classes = ds_norm.classes
+        except:
             classes = [str(i) for i in range(37)]
-    elif name.lower() == 'dtd':
-        ds = datasets.DTD(root=data_root, transform=preprocess, download=True)
-        classes = ds.classes
-    elif name.lower() == 'stl10':
-        ds = datasets.STL10(root=data_root, split='test', download=True, transform=preprocess)
-        classes = ds.classes
+    elif n == 'dtd':
+        ds_raw = datasets.DTD(root=data_root, transform=raw_tf, download=True)
+        ds_norm = datasets.DTD(root=data_root, transform=norm_tf, download=False)
+        classes = ds_norm.classes
+    elif n == 'stl10':
+        ds_raw = datasets.STL10(root=data_root, split='test', download=True, transform=raw_tf)
+        ds_norm = datasets.STL10(root=data_root, split='test', download=False, transform=norm_tf)
+        classes = ds_norm.classes
     else:
         raise ValueError('Unknown dataset: ' + name)
 
-    loader = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
-    return loader, classes
+    raw_loader = torch.utils.data.DataLoader(ds_raw, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    norm_loader = torch.utils.data.DataLoader(ds_norm, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    return raw_loader, norm_loader, classes
 
-# ---------- Evaluate function ----------
-def evaluate_clip_on_loader(model, preprocess, device, loader, text_features, class_names):
-    model.eval()
-    total = 0
-    correct = 0
+# ---------------- utility: collect sample numpy arrays ----------------
+def collect_samples(raw_loader, max_samples):
+    X_list = []
+    y_list = []
+    cnt = 0
+    for imgs, targets in raw_loader:
+        imgs_np = imgs.numpy()
+        X_list.append(imgs_np)
+        y_list.append(np.array(targets))
+        cnt += imgs_np.shape[0]
+        if cnt >= max_samples:
+            break
+    if len(X_list) == 0:
+        return np.zeros((0,3,224,224), dtype=np.float32), np.zeros((0,), dtype=np.int64)
+    X = np.concatenate(X_list, axis=0)[:max_samples]
+    Y = np.concatenate(y_list, axis=0)[:max_samples]
+    return X, Y
+
+# ----------------- vectorized patch application (GPU) -----------------
+def apply_patch_batch_tensor(imgs_tensor, patch_tensor, scale=0.3, random_place=False):
+    # imgs_tensor: (B,3,224,224) in 0-1 on device
+    B, C, H, W = imgs_tensor.shape
+    # resize patch once
+    ph = max(1, int(patch_tensor.shape[1]*scale))
+    pw = max(1, int(patch_tensor.shape[2]*scale))
+    patch_resized = torch.nn.functional.interpolate(patch_tensor.unsqueeze(0), size=(ph,pw), mode='bilinear', align_corners=False)[0]
+    imgs_p = imgs_tensor.clone()
+    if not random_place:
+        y0 = H - ph
+        x0 = W - pw
+        imgs_p[:, :, y0:y0+ph, x0:x0+pw] = patch_resized.unsqueeze(0).expand(B, -1, -1, -1)
+    else:
+        # random placement per image (vectorized-ish by computing indices)
+        ys = torch.randint(0, H-ph+1, (B,), device=imgs_tensor.device)
+        xs = torch.randint(0, W-pw+1, (B,), device=imgs_tensor.device)
+        for i in range(B):
+            y0 = int(ys[i].item()); x0 = int(xs[i].item())
+            imgs_p[i, :, y0:y0+ph, x0:x0+pw] = patch_resized
+    return imgs_p
+
+# ---------------- main evaluation ----------------
+def evaluate_dataset(ds_name, clip_model, clip_device, args):
+    print(f'\n=== Dataset: {ds_name} ===')
+    raw_loader, norm_loader, classes = make_loaders(ds_name, args.data_root, args.batch_size)
+    # make text features
+    text_prompts = [f"a photo of a {c}" for c in classes]
+    tokenized = clip.tokenize(text_prompts).to(clip_device)
     with torch.no_grad():
-        for images, targets in tqdm(loader, desc='Eval'):
-            images = images.to(device)
-            image_features = model.encode_image(images)
-            # normalize
-            image_features = image_features / image_features.norm(dim=1, keepdim=True)
-            # text_features: precomputed normalized features shape (C, dim)
-            sims = 100.0 * image_features @ text_features.T  # temperature scaling used in CLIP
-            preds = sims.argmax(dim=1).cpu().numpy()
-            # For some datasets torchvision returns (img, target) where target may be tensor, sometimes dict
-            targets_np = np.array(targets) if isinstance(targets, (list,tuple))==False else np.array(targets)
-            # For safety, convert tensor targets to numpy
-            if hasattr(targets, 'numpy'):
-                targets_np = targets.numpy()
-            total += len(preds)
-            correct += (preds == targets_np).sum()
-    acc = 100.0 * correct / total
-    return acc
+        text_feats = clip_model.encode_text(tokenized)
+        text_feats = text_feats / text_feats.norm(dim=1, keepdim=True)
 
-# ---------- main ----------
+    # clean eval
+    correct = total = 0
+    clip_model.eval()
+    with torch.no_grad():
+        for imgs, targets in tqdm(norm_loader, desc=f'{ds_name} clean'):
+            imgs = imgs.to(clip_device)
+            feats = clip_model.encode_image(imgs)
+            feats = feats / feats.norm(dim=1, keepdim=True)
+            sims = (100.0 * feats @ text_feats.T)
+            preds = sims.argmax(dim=1).cpu().numpy()
+            targets_np = targets.numpy() if hasattr(targets, 'numpy') else np.array(targets)
+            total += len(preds); correct += (preds == targets_np).sum()
+    clean_acc = 100.0 * correct / total
+    print(f'Clean acc: {clean_acc:.2f}%')
+
+    # ---------- craft patch using surrogate + ART on sampled subset ----------
+    raw_for_sample_loader = torch.utils.data.DataLoader(raw_loader.dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    sample_n = args.sample_per_ds if args.max_samples_global is None else min(args.sample_per_ds, args.max_samples_global)
+    X_samples, Y_samples = collect_samples(raw_for_sample_loader, sample_n)
+    if X_samples.shape[0] == 0:
+        raise RuntimeError('No samples collected for patch crafting.')
+    print(f'Collected {X_samples.shape[0]} samples for crafting patch for {ds_name} (max_iter={args.max_iter})')
+
+    # surrogate model (pretrained resnet18)
+    surrogate = torchvision.models.resnet18(pretrained=True).to(clip_device)
+    surrogate.eval()
+    sur_loss = nn.CrossEntropyLoss()
+    sur_opt = torch.optim.SGD(surrogate.parameters(), lr=1e-3)
+    sur_classifier = PyTorchClassifier(model=surrogate, loss=sur_loss, optimizer=sur_opt,
+                                       input_shape=(3,224,224), nb_classes=1000, clip_values=(0.0,1.0),
+                                       device_type='gpu' if args.device.startswith('cuda') else 'cpu')
+
+    patch_attack = AdversarialPatch(
+        classifier=sur_classifier,
+        patch_shape=(3, args.patch_size, args.patch_size),
+        learning_rate=5.0,
+        max_iter=args.max_iter,
+        batch_size=args.batch_size,
+        scale_min=0.2,
+        scale_max=0.5,
+        rotation_max=22.5,
+        random_location=True,
+        verbose=False
+    )
+    t0 = time.time()
+    print('Crafting adversarial patch (surrogate, ART)...')
+    patch = patch_attack.generate(x=X_samples, y=Y_samples)
+    # ensure shape (3,h,w)
+    if patch.ndim == 4:
+        patch = patch[0]
+    patch_t = torch.tensor(patch, dtype=torch.float32).to(clip_device)
+    t1 = time.time()
+    print(f'Patch crafted in {(t1-t0)/60:.2f} min.')
+
+    # ---------- evaluate adv accuracy: apply patch to raw test loader in batches (GPU) ----------
+    correct_adv = total_adv = 0
+    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=clip_device).view(1,3,1,1)
+    std  = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=clip_device).view(1,3,1,1)
+
+    # Use raw test loader (not shuffled) to be consistent with clean eval ordering
+    test_raw_loader = torch.utils.data.DataLoader(raw_loader.dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    with torch.no_grad():
+        for raw_imgs, targets in tqdm(test_raw_loader, desc=f'{ds_name} adv'):
+            imgs_t = raw_imgs.to(clip_device).float()  # 0-1
+            # apply patch (scale fixed for speed; can be randomized)
+            patched = apply_patch_batch_tensor(imgs_t, patch_t, scale=0.3, random_place=args.random_placement)
+            # normalize for CLIP
+            patched_norm = (patched - mean) / std
+            feats = clip_model.encode_image(patched_norm)
+            feats = feats / feats.norm(dim=1, keepdim=True)
+            sims = (100.0 * feats @ text_feats.T)
+            preds = sims.argmax(dim=1).cpu().numpy()
+            targets_np = targets.numpy() if hasattr(targets, 'numpy') else np.array(targets)
+            total_adv += len(preds); correct_adv += (preds == targets_np).sum()
+
+    adv_acc = 100.0 * correct_adv / total_adv
+    print(f'Adv acc: {adv_acc:.2f}%')
+
+    return f"{ds_name}\tclean_acc: {clean_acc:.2f}%\tadv_acc: {adv_acc:.2f}%"
+
 def main():
-    # datasets to run
-    datasets_to_run = ['Food101', 'CIFAR100', 'OxfordIIITPet', 'DTD', 'STL10']
+    args = parse_args()
+    # dataset list
+    datasets_list = ['Food101','CIFAR100','OxfordIIITPet','DTD','STL10']
+    if args.dataset:
+        datasets_list = [args.dataset]
 
     # load CLIP
-    clip_model, clip_preprocess = clip.load("ViT-B/32", device=device, jit=False)
+    device = args.device
+    clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
     clip_model.to(device)
+    # use fp16 on CUDA if available to speed up
+    use_fp16 = device.startswith('cuda')
+    if use_fp16:
+        clip_model = clip_model.half()
 
     results = []
-    for ds_name in datasets_to_run:
-        print(f'\n=== Dataset: {ds_name} ===')
-        loader, class_names = get_dataset_loader(ds_name)
-        # prepare text prompts (simple): just the class name
-        # For datasets like CIFAR100 class_names are textual; for others ensure length matches
-        text_prompts = [f"a photo of a {c}" for c in class_names]
-        tokenized = clip.tokenize(text_prompts).to(device)
-        with torch.no_grad():
-            text_features = clip_model.encode_text(tokenized)
-            text_features = text_features / text_features.norm(dim=1, keepdim=True)
-
-        # Evaluate on clean
-        clean_acc = evaluate_clip_on_loader(clip_model, clip_preprocess, device, loader, text_features, class_names)
-        print(f'Clean acc: {clean_acc:.2f}%')
-
-        # ----------------- Build ART classifier wrapper -----------------
-        # ART expects classifier(model, loss_fn, input_shape, nb_classes, optimizer(optional))
-        # We'll use a small wrapper model that given images returns logits over classes using CLIP features.
-        
-        # Now ATTACK: craft patch (ART will modify inputs in 0-1 domain)
-        # NOTE: our classifier expects normalized inputs; to make ART pipeline consistent we must create a classifier that normalizes inside forward.
-        # Instead of a more complicated wrapper, a pragmatic approach: craft patch using a surrogate simple classifier (e.g., a small pretrained ResNet) to produce a transferable patch, then apply patch to images and evaluate on CLIP.
-        # For clarity and reproducibility: we use ART's AdversarialPatch with a small pretrained ResNet18 from torchvision as surrogate classifier.
-        surrogate = torchvision.models.resnet18(pretrained=True).to(device)
-        surrogate.eval()
-        # wrap surrogate into ART classifier
-        surrogate_loss = nn.CrossEntropyLoss()
-        surrogate_opt = torch.optim.SGD(surrogate.parameters(), lr=1e-3)
-        sur_classifier = PyTorchClassifier(
-            model=surrogate,
-            loss=surrogate_loss,
-            optimizer=surrogate_opt,
-            input_shape=(3,224,224),
-            nb_classes=1000,
-            clip_values=(0.0, 1.0),
-            device_type='gpu' if 'cuda' in device else 'cpu'
-        )
-        # craft patch on surrogate
-        patch_attack_sur = AdversarialPatch(
-            classifier=sur_classifier,
-            patch_shape=(3, args.patch_size, args.patch_size),
-            learning_rate=5.0,
-            max_iter=min(500, args.max_iter),  # speed
-            batch_size=batch_size,
-            scale_min=0.2,
-            scale_max=0.5,
-            rotation_max=22.5,
-            random_location=True,
-            verbose=False
-        )
-        print('Crafting adversarial patch on surrogate model (this may take some time)...')
-        patch = patch_attack_sur.generate(x=X_train, y=y_train)
-        # patch returned shape: (3, patch_h, patch_w)
-        # Now apply patch to the entire test set (raw images in 0-1), then normalize with CLIP stats and evaluate CLIP
-
-        # helper to apply patch (ART provides apply_patch function, but we'll do simple placement randomly)
-        def apply_patch_to_batch(x_batch, patch, scale=(0.2,0.5)):
-            # x_batch: numpy array (N,3,224,224) in 0-1
-            patched = x_batch.copy()
-            N = patched.shape[0]
-            p_h, p_w = patch.shape[1], patch.shape[2]
-            for i in range(N):
-                img = patched[i]
-                # random scale
-                s = np.random.uniform(scale[0], scale[1])
-                new_h = int(p_h * s)
-                new_w = int(p_w * s)
-                # resize patch
-                import cv2
-                patch_resized = cv2.resize(np.transpose(patch, (1,2,0)), (new_w, new_h))
-                patch_resized = np.transpose(patch_resized, (2,0,1))
-                # random location
-                max_y = img.shape[1] - new_h
-                max_x = img.shape[2] - new_w
-                if max_y < 0 or max_x < 0:
-                    continue
-                off_y = np.random.randint(0, max_y+1)
-                off_x = np.random.randint(0, max_x+1)
-                img[:, off_y:off_y+new_h, off_x:off_x+new_w] = patch_resized
-                patched[i] = img
-            return patched
-
-        # evaluate adv acc: iterate raw test loader, apply patch, then normalize and feed to CLIP
-        total = 0
-        correct_adv = 0
-        for raw_imgs, targets in tqdm(raw_loader, desc='Adv-eval'):
-            raw_np = raw_imgs.numpy()  # (B,3,224,224) in 0-1
-            patched_np = apply_patch_to_batch(raw_np, patch, scale=(0.2,0.5))
-            # normalize patched images for CLIP
-            patched_tensor = torch.tensor(patched_np).to(device)
-            # apply CLIP normalization
-            mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=device).view(3,1,1)
-            std  = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=device).view(3,1,1)
-            patched_norm = (patched_tensor - mean) / std
-            with torch.no_grad():
-                img_feats = clip_model.encode_image(patched_norm)
-                img_feats = img_feats / img_feats.norm(dim=1, keepdim=True)
-                sims = 100.0 * img_feats @ text_features.T
-                preds = sims.argmax(dim=1).cpu().numpy()
-            # targets -> numpy
-            if hasattr(targets, 'numpy'):
-                targets_np = targets.numpy()
-            else:
-                targets_np = np.array(targets)
-            total += len(preds)
-            correct_adv += (preds == targets_np).sum()
-
-        adv_acc = 100.0 * correct_adv / total
-        print(f'Adv acc: {adv_acc:.2f}%')
-
-        # record result line
-        results.append(f"{ds_name}\tclean_acc: {clean_acc:.2f}%\tadv_acc: {adv_acc:.2f}%")
-        # free CUDA mem
+    for ds in datasets_list:
+        res_line = evaluate_dataset(ds, clip_model, device, args)
+        results.append(res_line)
+        # free memory
         torch.cuda.empty_cache()
 
     # save results
@@ -243,7 +228,6 @@ def main():
         for r in results:
             f.write(r + "\n")
     print('All done. Results saved to', args.output)
-
 
 if __name__ == '__main__':
     main()
