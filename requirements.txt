@@ -5,3 +5,7 @@ ftfy
 regex
 git+https://github.com/openai/CLIP.git
 
+ # 确保匹配你 CUDA 版本，或使用 CPU wheel
+scipy
+ # openai/CLIP
+adversarial-robustness-toolbox            # ART (官方包)
