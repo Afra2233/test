@@ -235,4 +235,6 @@ def main():
     print('All done. Results saved to', args.output)
 
 if __name__ == '__main__':
+    print("2222")
     main()
+
