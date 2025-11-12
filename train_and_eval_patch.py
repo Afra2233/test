@@ -361,7 +361,7 @@ def main(args):
         trainset = datasets.CIFAR100(root=workdir, train=True, download=True, transform=transforms.ToTensor())
         patch, attack = generate_universal_patch(art_clf, trainset, workdir, device,
                                                 max_iters=args.max_iters, patch_size=max(args.patch_h, args.patch_w),
-                                                batch_size=args.batch_size, save_name=args.patch_name)
+                                                )
 
     # 3) prepare CLIP
     clip_model, clip_preprocess = make_clip_model(device)
