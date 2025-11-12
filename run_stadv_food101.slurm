@@ -15,7 +15,7 @@ cd /scratch/hpc/07/zhang303/test
 srun python train_and_eval_patch.py \
     --workdir ./work \
     --device cuda \
-    --epochs 30 \
+    --epochs 50 \
     --batch-size 128 \
     --pretrained \
-    --patch-iters 300
+    --max-iters 300
