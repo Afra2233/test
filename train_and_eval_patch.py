@@ -188,7 +188,7 @@ def generate_universal_patch(art_clf, trainset, workdir, device, max_iters=300, 
     # 初始化 ART Patch 攻击
     attack = AdversarialPatch(
         estimator=art_clf,
-        max_iter=max_iters,
+        max_iters=max_iters,
         patch_shape=patch_shape,
         learning_rate=5.0,
         verbose=True,
@@ -360,7 +360,7 @@ def main(args):
         # prepare train dataset for patch generation
         trainset = datasets.CIFAR100(root=workdir, train=True, download=True, transform=transforms.ToTensor())
         patch, attack = generate_universal_patch(art_clf, trainset, workdir, device,
-                                                max_iter=args.max_iters, patch_shape=(args.patch_h, args.patch_w),
+                                                max_iters=args.max_iters, patch_shape=(args.patch_h, args.patch_w),
                                                 batch_size=args.batch_size, save_name=args.patch_name)
 
     # 3) prepare CLIP
