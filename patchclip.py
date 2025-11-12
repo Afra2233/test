@@ -208,7 +208,7 @@ def main():
     print("main")
     args = parse_args()
     # dataset list
-    datasets_list = ['Food101','CIFAR100','OxfordIIITPet','DTD','STL10']
+    datasets_list = ['CIFAR10','CIFAR100','OxfordIIITPet','DTD','STL10','Food101']
     if args.dataset:
         datasets_list = [args.dataset]
 
