@@ -165,70 +165,52 @@ def make_art_classifier(model, device, input_shape=(3,32,32), nb_classes=100):
     return classifier
 
 # ----- generate adversarial patch on CIFAR-100 -----
-def generate_universal_patch(classifier, train_dataset, workdir, device, max_iter=500, patch_shape=(10,10), batch_size=128, save_name="universal_patch.npy"):
+def generate_universal_patch(art_clf, trainset, workdir, device, patch_iters=300, patch_size=32):
     """
-    使用 ART AdversarialPatch 来训练一个通用 patch。
-    参数说明:
-      classifier: ART PyTorchClassifier 包装的 victim model
-      train_dataset: torchvision Dataset (training split)
-    返回:
-      patch: numpy array, shape (H_patch, W_patch, C)
+    生成 universal adversarial patch
+    自动适配不同输入数据集的通道和尺寸
     """
+
+    # 自动检测输入形状 (C, H, W)
+    input_shape = art_clf.input_shape
+    if len(input_shape) != 3:
+        raise ValueError(f"Unexpected input shape {input_shape}, expected (C,H,W)")
+    c, h, w = input_shape
+
+    # 设定 patch 尺寸比例，自动计算 patch 的高宽
+    patch_h = min(patch_size, h)
+    patch_w = min(patch_size, w)
+    patch_shape = (patch_h, patch_w, c)  # ART expects (H, W, C)
+
+    print(f"[INFO] Detected dataset input shape: (C,H,W)={input_shape}")
+    print(f"[INFO] Using patch shape (H,W,C)={patch_shape}")
+
+    # 初始化 ART Patch 攻击
     attack = AdversarialPatch(
-        classifier=classifier,
-        rotation_max=22.5,
-        scale_min=0.05,
-        scale_max=0.3,
-        learning_rate=5.0,   # ART 中 attack 内部使用的 lr (可调)
-        max_iter=max_iter,
-        patch_shape=patch_shape  # (H, W) in pixels
+        estimator=art_clf,
+        max_iter=patch_iters,
+        patch_shape=patch_shape,
+        learning_rate=5.0,
+        verbose=True,
     )
-    # prepare a dataloader that yields images in [0,1]
-    loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
-    # ART expects numpy arrays with shape (N, H, W, C)
-    # We'll pass minibatches to attack.generate repeatedly to optimize patch.
-    print("Starting patch generation (this may take a while)...")
-    # Some versions of ART accept list/np arrays; we'll call attack.generate with a small subset repeatedly
-    for images, labels in tqdm(loader, desc="Patch training batches"):
-        # convert to numpy NHWC
-        imgs = images.numpy().transpose(0,2,3,1).astype(np.float32)
-        # ensure in [0,1]
-        imgs = np.clip(imgs, 0.0, 1.0)
-        try:
-            attack.generate(x=imgs, y=None)
-        except Exception as e:
-            # Some ART versions require calling generate with a larger set: fallback to single call
-            # In many ART versions, a single attack.generate on multiple batches refines internal patch.
-            print("Warning while calling attack.generate:", e)
-            pass
-        # break early if attack produced patch attribute
-        if hasattr(attack, "patch") and attack.patch is not None:
-            break
-    # after iterative calls ART stores patch in attack.patch
-    if not hasattr(attack, "patch") or attack.patch is None:
-        # last attempt: call generate on a small set
-        sample_images = []
-        for i, (images, _) in enumerate(loader):
-            sample_images.append(images.numpy().transpose(0,2,3,1).astype(np.float32))
-            if i>=2: break
-        x_sample = np.concatenate(sample_images, axis=0)
-        try:
-            attack.generate(x=x_sample, y=None)
-        except Exception as e:
-            print("Final generate() attempt failed:", e)
-    if not hasattr(attack, "patch") or attack.patch is None:
-        raise RuntimeError("ART AdversarialPatch 没有生成 patch。请检查 ART 版本或参数。")
-    patch = attack.patch  # shape (H_patch, W_patch, C) or (C, H, W) depending on version
-    # normalize patch to HWC with channels last and values in [0,1]
-    if patch.ndim == 3 and patch.shape[0] in (1,3) and patch.shape[2] != 3:
-        # maybe (C, H, W) -> convert
-        patch = np.transpose(patch, (1,2,0))
-    patch = np.clip(patch, 0.0, 1.0)
-    # save
-    os.makedirs(workdir, exist_ok=True)
-    save_path = Path(workdir) / save_name
-    np.save(save_path, patch)
-    print("Saved patch to", save_path)
+
+    # 取少量样本生成 universal patch
+    print("[INFO] Generating universal adversarial patch...")
+    sample_loader = torch.utils.data.DataLoader(trainset, batch_size=16, shuffle=True)
+    batch = next(iter(sample_loader))
+    images, labels = batch[0], batch[1]
+    images_np = images.numpy()
+    labels_np = labels.numpy()
+
+    # 调用 ART 攻击生成 patch
+    patch = attack.generate(x=images_np, y=labels_np)
+    print("[INFO] Patch generation complete.")
+
+    # 保存 patch 文件
+    patch_path = os.path.join(workdir, "universal_patch.npy")
+    np.save(patch_path, patch)
+    print(f"[INFO] Patch saved to: {patch_path}")
+
     return patch, attack
 
 # ----- apply patch to images (simple pasting) -----
