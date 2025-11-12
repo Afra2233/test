@@ -18,4 +18,4 @@ srun python train_and_eval_patch.py \
     --epochs 50 \
     --batch-size 128 \
     --pretrained \
-    --max-iters 300
+    --max_iters 300

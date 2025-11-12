@@ -360,7 +360,7 @@ def main(args):
         # prepare train dataset for patch generation
         trainset = datasets.CIFAR100(root=workdir, train=True, download=True, transform=transforms.ToTensor())
         patch, attack = generate_universal_patch(art_clf, trainset, workdir, device,
-                                                max_iter=args.patch_iters, patch_shape=(args.patch_h, args.patch_w),
+                                                max_iter=args.max_iters, patch_shape=(args.patch_h, args.patch_w),
                                                 batch_size=args.batch_size, save_name=args.patch_name)
 
     # 3) prepare CLIP
@@ -414,7 +414,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--pretrained', action='store_true', help='是否将 resnet50 从 ImageNet 预训练权重微调')
     parser.add_argument('--resume-train', action='store_true', help='若已存在模型，直接加载')
-    parser.add_argument('--max-iters', type=int, default=300, help='AdversarialPatch 内部最大迭代次数 (可调)')
+    parser.add_argument('--max_iters', type=int, default=300, help='AdversarialPatch 内部最大迭代次数 (可调)')
     parser.add_argument('--patch-h', type=int, default=8, help='patch 高 (像素，针对 32x32 图像)')
     parser.add_argument('--patch-w', type=int, default=8, help='patch 宽 (像素)')
     parser.add_argument('--patch-name', type=str, default='universal_patch.npy', help='保存 patch 文件名')
