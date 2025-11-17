@@ -165,7 +165,7 @@ def make_art_classifier(model, device, input_shape=(3,32,32), nb_classes=100):
     return classifier
 
 # ----- generate adversarial patch on CIFAR-100 -----
-def generate_universal_patch(art_clf, trainset, workdir, device, max_iters=300, patch_size=32):
+def generate_universal_patch(art_clf, trainset, workdir, device, max_iter=300, patch_size=32):
     """
     生成 universal adversarial patch
     自动适配不同输入数据集的通道和尺寸
@@ -187,8 +187,8 @@ def generate_universal_patch(art_clf, trainset, workdir, device, max_iters=300, 
 
     # 初始化 ART Patch 攻击
     attack = AdversarialPatch(
-        estimator=art_clf,
-        max_iters=max_iters,
+        classifier=art_clf,
+        max_iter=max_iters,
         patch_shape=patch_shape,
         learning_rate=5.0,
         verbose=True,
@@ -360,7 +360,7 @@ def main(args):
         # prepare train dataset for patch generation
         trainset = datasets.CIFAR100(root=workdir, train=True, download=True, transform=transforms.ToTensor())
         patch, attack = generate_universal_patch(art_clf, trainset, workdir, device,
-                                                max_iters=args.max_iters, patch_size=max(args.patch_h, args.patch_w),
+                                                max_iter=args.max_iters, patch_size=max(args.patch_h, args.patch_w),
                                                 )
 
     # 3) prepare CLIP
