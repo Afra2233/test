@@ -184,6 +184,7 @@ def generate_universal_patch(art_clf, trainset, workdir, device, max_iter=300, p
     print(f"[INFO] Detected dataset input shape: (C,H,W)={input_shape}")
     print(f"[INFO] Using patch shape (H,W,C)={patch_shape}")
 
+    
     # 初始化 ART Patch 攻击
     attack = AdversarialPatch(
         classifier=art_clf,
@@ -353,7 +354,8 @@ def main(args):
         # ensure shape HWC and values in [0,1]
         patch = np.clip(patch, 0.0, 1.0)
         # For ART attacks we also want an attack object to use apply_patch helper if available.
-        attack = AdversarialPatch(classifier=art_clf, patch_shape=(patch.shape[0], patch.shape[1]))
+        h_p, w_p, c_p = patch.shape
+        attack = AdversarialPatch(classifier=art_clf, patch_shape=(h_p, w_p, c_p))
         attack.patch = patch
     else:
         # prepare train dataset for patch generation
