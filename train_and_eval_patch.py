@@ -178,9 +178,8 @@ def generate_universal_patch(art_clf, trainset, workdir, device, max_iter=300, p
     c, h, w = input_shape
 
     # 设定 patch 尺寸比例，自动计算 patch 的高宽
-    patch_h = min(patch_size, h)
-    patch_w = min(patch_size, w)
-    patch_shape = (patch_h, patch_w, c)  # ART expects (H, W, C)
+    patch_side = min(patch_size, h, w)   # 强制正方形
+    patch_shape = (patch_side, patch_side, c) # ART expects (H, W, C)
 
     print(f"[INFO] Detected dataset input shape: (C,H,W)={input_shape}")
     print(f"[INFO] Using patch shape (H,W,C)={patch_shape}")

@@ -15,8 +15,10 @@ cd /scratch/hpc/07/zhang303/test
 srun python train_and_eval_patch.py \
     --workdir ./work \
     --device cuda \
-    --load-resnet ./work/resnet50_cifar100.pth \
+    --load-resnet \
     --epochs 30 \
     --batch-size 128 \
     --pretrained \
     --max_iter 300
+
+    # ./work/resnet50_cifar100.pth 
