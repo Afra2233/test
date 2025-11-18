@@ -144,7 +144,7 @@ def main():
     wrapped = ClipForART(clip_model, cifar100_text_features).to(device)
 
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam([], lr=1e-4)  # 不训练 CLIP！
+    optimizer = optim.Adam(wrapped.parameters(), lr=1e-4)  # 不训练 CLIP！
 
     classifier = PyTorchClassifier(
         model=wrapped,
