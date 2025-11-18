@@ -12,13 +12,14 @@ source activate stadv
 cd /scratch/hpc/07/zhang303/test
 #srun python stadv_clip_food101.py --device cuda --batch-size 16 --steps 20
 # srun python patchclip.py 
-srun python train_and_eval_patch.py \
-    --workdir ./work \
-    --device cuda \
-    --load-resnet ./work/resnet50_cifar100.pth \
-    --epochs 30 \
-    --batch-size 128 \
-    --pretrained \
-    --max_iter 300
+# srun python train_and_eval_patch.py \
+#     --workdir ./work \
+#     --device cuda \
+#     --load-resnet ./work/resnet50_cifar100.pth \
+#     --epochs 30 \
+#     --batch-size 128 \
+#     --pretrained \
+#     --max_iter 300
 
-    #     --load-resnet ./work/resnet50_cifar100.pth 
+#     #     --load-resnet ./work/resnet50_cifar100.pth 
+srun python train_and_eval_patch.py

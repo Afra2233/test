@@ -1,11 +1,41 @@
-torch>=2.0
-torchvision
-tqdm
-ftfy
-regex
+# torch>=2.0
+# torchvision
+# tqdm
+# ftfy
+# regex
+# git+https://github.com/openai/CLIP.git
+
+#  # 确保匹配你 CUDA 版本，或使用 CPU wheel
+# scipy
+#  # openai/CLIP
+# adversarial-robustness-toolbox            # ART (官方包)
+# ---- Core Machine Learning ----
+torch==2.1.0
+torchvision==0.16.0
+
+# ---- CLIP ----
 git+https://github.com/openai/CLIP.git
 
- # 确保匹配你 CUDA 版本，或使用 CPU wheel
+# ---- ART (Adversarial Robustness Toolbox) ----
+adversarial-robustness-toolbox==1.17.0
+
+# ---- Vision Datasets / Preprocessing ----
+numpy==1.24.4
+Pillow
+opencv-python
+matplotlib
+tqdm
+
+# ---- torchvision extra datasets ----
+scikit-image
 scipy
- # openai/CLIP
-adversarial-robustness-toolbox            # ART (官方包)
+
+# Flowers102, Food101, DTD, OxfordIIITPet may depend on these:
+requests
+
+# ---- Huggingface tokenizer dependency (CLIP also uses this indirectly) ----
+regex
+ftfy
+
+# ---- Optional but useful ----
+pandas
