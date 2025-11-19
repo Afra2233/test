@@ -117,57 +117,53 @@ def evaluate_dataset(name, dataset, clip_model, device, patch_np, patch_attack):
 # main()
 # ===============================
 def main():
-
     # ---------------------------
-    # 0. 设备
+    # 0. 设置 transform
+    # ---------------------------
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
-        transforms.ToTensor(),          # 输出范围 [0, 1]
+        transforms.ToTensor(),  # 输出在 [0,1]
     ])
 
     # ============================================================
-    # PHASE 1: 在 CPU 上用 ART + CIFAR100 训练 universal patch
+    # PHASE 1：在 CPU 上训练 universal patch（ART 只能用 CPU）
     # ============================================================
-    train_device = "cpu"
-    print("=== Phase 1: Train patch on CPU ===")
+    print("=== Phase 1: Train universal patch on CPU ===")
+    cpu_device = "cpu"
 
-    # 1) 加载 CLIP 到 CPU
-    clip_model_cpu, _ = clip.load("ViT-B/32", device=train_device, jit=False)
+    # 1) 加载 CLIP（CPU）
+    clip_model_cpu, _ = clip.load("ViT-B/32", device=cpu_device, jit=False)
     for p in clip_model_cpu.parameters():
         p.requires_grad = False
     clip_model_cpu.eval()
 
-    # 2) CIFAR100 训练集（用来优化 patch）
+    # 2) CIFAR100 用于训练补丁
     cifar100_train = CIFAR100("data/cifar100", train=True, download=True, transform=transform)
     train_loader = DataLoader(cifar100_train, batch_size=8, shuffle=True)
 
-    # 3) 为 CIFAR100 构建 text features（在 CPU 上）
+    # 3) 文本特征（zero-shot）
     cifar100_class_names = cifar100_train.classes
-    cifar100_text_features = build_text_features(cifar100_class_names, clip_model_cpu, train_device)
+    cifar100_text_features = build_text_features(cifar100_class_names, clip_model_cpu, cpu_device)
 
-    # 4) 包一层 CLIP wrapper 给 ART 用（仍然在 CPU）
-    wrapped_cpu = ClipForART(clip_model_cpu, cifar100_text_features).to(train_device)
+    # 4) 包装成 ART 模型
+    wrapped_cpu = ClipForART(clip_model_cpu, cifar100_text_features).to(cpu_device)
 
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(wrapped_cpu.parameters(), lr=1e-4)  # 实际上不会更新 CLIP，但 ART 需要一个 optimizer
+    optimizer = optim.Adam(wrapped_cpu.parameters(), lr=1e-4)  # 不会被真的训练
 
+    # 5) ART classifier（CPU ONLY）
     classifier = PyTorchClassifier(
-        model=wrapped,
+        model=wrapped_cpu,
         loss=loss_fn,
         optimizer=optimizer,
         input_shape=(3, 224, 224),
         nb_classes=len(cifar100_class_names),
-        clip_values=(0, 1),
-        # clip_values=None,              # ← 禁止默认 preprocessing
-        preprocessing_defences=[],     # ← 关键：禁止所有 preprocessing
-        postprocessing_defences=[]
+        clip_values=(0.0, 1.0),   # 非常重要
+        preprocessing_defences=None,
+        postprocessing_defences=None
     )
 
-    # ---------------------------
-    # 5. 配置 adversarial patch
-    # ---------------------------
-   
-    print(art.__version__)
+    # 6) 配置补丁攻击
     patch_attack = AdversarialPatchPyTorch(
         estimator=classifier,
         patch_shape=(3, 112, 112),
@@ -175,25 +171,14 @@ def main():
         scale_min=0.3,
         scale_max=0.6,
         learning_rate=1.0,
-        max_iter=300,
+        max_iter=200,
         batch_size=8,
-        optimizer="pgd",
         targeted=False,
         verbose=True
     )
-    print("\nSwitching ART + CLIP to CPU for patch training...")
 
-    clip_model = clip_model.to("cpu")
-    wrapped = wrapped.to("cpu")
-    classifier._device = torch.device("cpu")
-    patch_attack._device = torch.device("cpu")
-    # for p in classifier.preprocessing_operations:
-    #     p._device = torch.device("cpu")
-    device = "cpu"
-    # ---------------------------
-    # 6. 选取 N 张 CIFAR100 图训练补丁
-    # ---------------------------
-    print("\nGenerating universal adversarial patch ...")
+    # 7) 准备训练数据（选 512 张）
+    print("Generating universal adversarial patch on CPU...")
     all_images, all_labels = [], []
     max_images = 512
 
@@ -206,42 +191,38 @@ def main():
     images_tensor = torch.cat(all_images)[:max_images]
     labels_tensor = torch.cat(all_labels)[:max_images]
 
-    # ART 使用 numpy
-    # patched_images_np, patch_np = patch_attack.generate(
-    #     x=images_tensor.numpy(),
-    #     y=labels_tensor.numpy()
-    # )
+    # ART 需要 numpy
+    images_np = images_tensor.numpy()
+    labels_np = labels_tensor.numpy()
 
-
-    classifier._device = torch.device("cpu")
-    patch_attack._device = torch.device("cpu")
-
-    # --- convert data to numpy ---
-    images_np = images_tensor.cpu().numpy()
-    labels_np = labels_tensor.cpu().numpy()
-
+    # 8) 训练补丁（CPU）
     patched_images_np, patch_np = patch_attack.generate(
         x=images_np,
         y=labels_np
     )
 
-
-    
-
-
-    # 保存 patch
+    # 保存补丁
     os.makedirs("artifacts", exist_ok=True)
     np.save("artifacts/universal_patch.npy", patch_np)
-    print("Saved patch → artifacts/universal_patch.npy")
+    print("Saved patch to artifacts/universal_patch.npy")
 
+    # ============================================================
+    # PHASE 2：用 GPU + PyTorch 对补丁效果进行评估（不再使用 ART）
+    # ============================================================
+    print("\n=== Phase 2: Evaluate on GPU ===")
 
-    print("\nSwitching CLIP back to GPU for evaluation...\n")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    clip_model = clip_model.to(device)
-    clip_model.eval()
-    # ---------------------------
-    # 7. 加载要评估的数据集
-    # ---------------------------
+    gpu_device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("Evaluation device:", gpu_device)
+
+    # 重新加载 CLIP 到 GPU
+    clip_model_gpu, _ = clip.load("ViT-B/32", device=gpu_device, jit=False)
+    for p in clip_model_gpu.parameters():
+        p.requires_grad = False
+    clip_model_gpu.eval()
+
+    # -------------------------
+    # 评估用数据集
+    # -------------------------
     test_datasets = {
         "cifar10": CIFAR10("data/cifar10", train=False, download=True, transform=transform),
         "dtd": DTD("data/dtd", split="test", download=True, transform=transform),
@@ -250,12 +231,11 @@ def main():
         "food101": Food101("data/food", split="test", download=True, transform=transform),
     }
 
-    # ---------------------------
-    # 8. Evaluate
-    # ---------------------------
+    # -------------------------
+    # 评估
+    # -------------------------
     for name, dataset in test_datasets.items():
-        evaluate_dataset(name, dataset, clip_model, device, patch_np, patch_attack)
-
+        evaluate_dataset(name, dataset, clip_model_gpu, gpu_device, patch_np, patch_attack)
 
 if __name__ == "__main__":
     main()
