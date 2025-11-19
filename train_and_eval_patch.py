@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 import clip
 from art.estimators.classification import PyTorchClassifier
 from art.attacks.evasion import AdversarialPatchPyTorch
-import art
+
 
 # ===============================
 # CLIP Wrapper 给 ART 用
@@ -20,17 +20,18 @@ class ClipForART(torch.nn.Module):
     def __init__(self, clip_model, text_features):
         super().__init__()
         self.clip_model = clip_model
-        self.text_features = text_features
+        self.text_features = text_features  # [num_classes, dim]
 
     def forward(self, images):
-        feats = self.clip_model.encode_image(images)
-        feats = feats / feats.norm(dim=-1, keepdim=True)
-        logits = 100 * feats @ self.text_features.T
+        # images: [B,3,224,224], in [0,1]
+        feats = self.clip_model.encode_image(images)           # [B, dim]
+        feats = feats / feats.norm(dim=-1, keepdim=True)       # 归一化
+        logits = 100 * feats @ self.text_features.T            # [B, num_classes]
         return logits
 
 
 # ===============================
-# 为数据集构建文本特征（zero-shot）
+# 为数据集构建 zero-shot 文本特征
 # ===============================
 def build_text_features(class_names, clip_model, device):
     prompts = [f"a photo of a {name.replace('_', ' ')}" for name in class_names]
@@ -39,132 +40,134 @@ def build_text_features(class_names, clip_model, device):
     with torch.no_grad():
         text_feats = clip_model.encode_text(tokens)
         text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
-    return text_feats
+
+    return text_feats  # [num_classes, dim] on `device`
 
 
 # ===============================
-# 给图片贴 universal patch
+# 评估阶段：在 GPU 上贴补丁（右下角）
 # ===============================
-def apply_universal_patch(images_tensor, patch_np, patch_attack):
-    images_np = images_tensor.numpy()
-    patched_np = patch_attack.apply_patch(images_np, patch=patch_np)
-    return torch.from_numpy(patched_np)
-
-
 def apply_patch_torch(images, patch_np, device):
-    patch = torch.from_numpy(patch_np).to(device)
+    """
+    images: [B,3,224,224] on device
+    patch_np: numpy array, shape (3,h,w), values in [0,1]
+    """
+    patch = torch.from_numpy(patch_np).to(device)  # [3,h,w]
+
     B, C, H, W = images.shape
     _, h, w = patch.shape
+
+    # 贴到右下角
     y0 = H - h
     x0 = W - w
+
     images = images.clone()
-    images[:, :, y0:y0+h, x0:x0+w] = patch
+    images[:, :, y0:y0 + h, x0:x0 + w] = patch
     return images
 
 
 # ===============================
-# 在一个数据集上评估 zero-shot
+# 在一个数据集上评估 zero-shot（干净 vs 带补丁）
 # ===============================
-def evaluate_dataset(name, dataset, clip_model, device, patch_np, patch_attack):
-    print(f"\nEvaluating on: {name}")
+def evaluate_dataset(name, dataset, clip_model, device, patch_np):
+    print(f"\n=== Evaluating on: {name} ===")
 
-    loader = DataLoader(dataset, batch_size=16, shuffle=False)
+    loader = DataLoader(dataset, batch_size=32, shuffle=False)
 
     # 类别名称
     if hasattr(dataset, "classes"):
         class_names = dataset.classes
     else:
-        raise ValueError(f"Dataset {name} has no .classes attribute")
+        raise ValueError(f"Dataset {name} has no .classes attribute; please define class_names manually.")
 
-    # 为该数据集构建 text features
-    text_features = build_text_features(class_names, clip_model, device)
+    # 为该数据集构建 text features（在 device 上）
+    text_features = build_text_features(class_names, clip_model, device)  # [num_classes, dim]
 
     total = 0
     clean_correct = 0
     patched_correct = 0
 
     for images, labels in loader:
-        images = images.to(device)
+        images = images.to(device)   # [B,3,224,224]
         labels = labels.to(device)
 
         # ---------- 干净 ----------
         with torch.no_grad():
             feats = clip_model.encode_image(images)
             feats = feats / feats.norm(dim=-1, keepdim=True)
-            logits = 100 * feats @ text_features.T.to(device)
+            logits = 100 * feats @ text_features.T
 
         preds_clean = logits.argmax(dim=1)
         clean_correct += (preds_clean == labels).sum().item()
 
         # ---------- 加补丁 ----------
-        # patched_images = apply_universal_patch(images.cpu(), patch_np, patch_attack).to(device)
         patched_images = apply_patch_torch(images, patch_np, device)
 
         with torch.no_grad():
             feats_p = clip_model.encode_image(patched_images)
             feats_p = feats_p / feats_p.norm(dim=-1, keepdim=True)
-            logits_p = 100 * feats_p @ text_features.T.to(device)
+            logits_p = 100 * feats_p @ text_features.T
 
         preds_patched = logits_p.argmax(dim=1)
         patched_correct += (preds_patched == labels).sum().item()
 
         total += labels.size(0)
 
-    print(f"{name}: clean_acc={clean_correct/total:.4f}, patched_acc={patched_correct/total:.4f}")
+    clean_acc = clean_correct / total
+    patched_acc = patched_correct / total
+    print(f"{name}: clean_acc = {clean_acc:.4f}, patched_acc = {patched_acc:.4f}")
 
 
 # ===============================
 # main()
 # ===============================
 def main():
-    # ---------------------------
-    # 0. 设置 transform
-    # ---------------------------
+    # --------------------------------------------------
+    # 0. 通用 transform（CPU 训练 / GPU 测试都用这一套）
+    # --------------------------------------------------
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
-        transforms.ToTensor(),  # 输出在 [0,1]
+        transforms.ToTensor(),  # 输出范围 [0,1]
     ])
 
-    # ============================================================
-    # PHASE 1：在 CPU 上训练 universal patch（ART 只能用 CPU）
-    # ============================================================
-    print("=== Phase 1: Train universal patch on CPU ===")
+    # ==================================================
+    # PHASE 1：在 CPU 上用 ART + CIFAR100 训练 universal patch
+    # ==================================================
+    print("=== Phase 1: Train universal patch on CPU (ART) ===")
     cpu_device = "cpu"
 
-    # 1) 加载 CLIP（CPU）
+    # 1) 加载 CLIP 到 CPU
     clip_model_cpu, _ = clip.load("ViT-B/32", device=cpu_device, jit=False)
     for p in clip_model_cpu.parameters():
         p.requires_grad = False
     clip_model_cpu.eval()
 
-    # 2) CIFAR100 用于训练补丁
+    # 2) CIFAR100 训练集（用来优化补丁）
     cifar100_train = CIFAR100("data/cifar100", train=True, download=True, transform=transform)
     train_loader = DataLoader(cifar100_train, batch_size=8, shuffle=True)
-  
 
-    # 3) 文本特征（zero-shot）
+    # 3) 为 CIFAR100 构建 zero-shot 文本特征（在 CPU 上）
     cifar100_class_names = cifar100_train.classes
     cifar100_text_features = build_text_features(cifar100_class_names, clip_model_cpu, cpu_device)
-    cifar100_text_features = cifar100_text_features.to("cpu")
-    # 4) 包装成 ART 模型
+
+    # 4) 包装成 ART 模型（仍然在 CPU 上）
     wrapped_cpu = ClipForART(clip_model_cpu, cifar100_text_features).to(cpu_device)
 
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(wrapped_cpu.parameters(), lr=1e-4)  # 不会被真的训练
+    optimizer = optim.Adam(wrapped_cpu.parameters(), lr=1e-4)  # 只是给 ART 一个 optimizer
 
-    # 5) ART classifier（CPU ONLY）
     classifier = PyTorchClassifier(
         model=wrapped_cpu,
         loss=loss_fn,
         optimizer=optimizer,
         input_shape=(3, 224, 224),
         nb_classes=len(cifar100_class_names),
-        clip_values=(0.0, 1.0),   # 非常重要
-        preprocessing_defences=None,
+        clip_values=(0.0, 1.0),      # 图像像素范围
+        preprocessing_defences=None,  # 不做额外 preprocessing
         postprocessing_defences=None
     )
 
-    # 6) 配置补丁攻击
+    # 5) 配置 adversarial patch 攻击（CPU）
     patch_attack = AdversarialPatchPyTorch(
         estimator=classifier,
         patch_shape=(3, 112, 112),
@@ -174,12 +177,13 @@ def main():
         learning_rate=1.0,
         max_iter=200,
         batch_size=8,
+        optimizer="pgd",
         targeted=False,
         verbose=True
     )
 
-    # 7) 准备训练数据（选 512 张）
-    print("Generating universal adversarial patch on CPU...")
+    # 6) 选取 N 张 CIFAR100 图像来训练补丁
+    print("Generating universal adversarial patch on CIFAR100 (CPU)...")
     all_images, all_labels = [], []
     max_images = 512
 
@@ -189,41 +193,36 @@ def main():
         if sum(x.size(0) for x in all_images) >= max_images:
             break
 
-    images_tensor = torch.cat(all_images)[:max_images]
-    labels_tensor = torch.cat(all_labels)[:max_images]
+    images_tensor = torch.cat(all_images)[:max_images]   # [N,3,224,224]
+    labels_tensor = torch.cat(all_labels)[:max_images]   # [N]
 
-    # ART 需要 numpy
     images_np = images_tensor.numpy()
     labels_np = labels_tensor.numpy()
 
-    # 8) 训练补丁（CPU）
     patched_images_np, patch_np = patch_attack.generate(
         x=images_np,
         y=labels_np
     )
 
-    # 保存补丁
     os.makedirs("artifacts", exist_ok=True)
-    np.save("artifacts/universal_patch.npy", patch_np)
-    print("Saved patch to artifacts/universal_patch.npy")
+    patch_path = "artifacts/universal_patch.npy"
+    np.save(patch_path, patch_np)
+    print(f"Saved universal patch to {patch_path}")
 
-    # ============================================================
-    # PHASE 2：用 GPU + PyTorch 对补丁效果进行评估（不再使用 ART）
-    # ============================================================
-    print("\n=== Phase 2: Evaluate on GPU ===")
+    # ==================================================
+    # PHASE 2：在 GPU 上用 CLIP 评估 patch（不再使用 ART）
+    # ==================================================
+    print("\n=== Phase 2: Evaluate patch robustness on GPU ===")
+    eval_device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("Evaluation device:", eval_device)
 
-    gpu_device = "cuda" if torch.cuda.is_available() else "cpu"
-    print("Evaluation device:", gpu_device)
-
-    # 重新加载 CLIP 到 GPU
-    clip_model_gpu, _ = clip.load("ViT-B/32", device=gpu_device, jit=False)
-    for p in clip_model_gpu.parameters():
+    # 重新加载一个干净的 CLIP 到 eval_device
+    clip_model_eval, _ = clip.load("ViT-B/32", device=eval_device, jit=False)
+    for p in clip_model_eval.parameters():
         p.requires_grad = False
-    clip_model_gpu.eval()
+    clip_model_eval.eval()
 
-    # -------------------------
-    # 评估用数据集
-    # -------------------------
+    # 载入需要评估的数据集
     test_datasets = {
         "cifar10": CIFAR10("data/cifar10", train=False, download=True, transform=transform),
         "dtd": DTD("data/dtd", split="test", download=True, transform=transform),
@@ -232,11 +231,10 @@ def main():
         "food101": Food101("data/food", split="test", download=True, transform=transform),
     }
 
-    # -------------------------
-    # 评估
-    # -------------------------
+    # 评估（干净 vs 带补丁）
     for name, dataset in test_datasets.items():
-        evaluate_dataset(name, dataset, clip_model_gpu, gpu_device, patch_np, patch_attack)
+        evaluate_dataset(name, dataset, clip_model_eval, eval_device, patch_np)
+
 
 if __name__ == "__main__":
     main()
