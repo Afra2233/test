@@ -93,4 +93,5 @@ def main():
 
 
 if __name__ == "__main__":
+    print("[DEBUG] main started", flush=True)
     main()
