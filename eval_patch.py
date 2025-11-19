@@ -65,17 +65,19 @@ def evaluate_dataset(name, dataset, clip_model, device, patch_np, text_features)
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Device:", device)
+    print("[DEBUG] enter main function", flush=True)
 
     clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
     clip_model.eval()
-
+ 
+    print("[DEBUG] load clip", flush=True)
     patch_np = np.load("artifacts/universal_patch.npy")
 
     transform = transforms.Compose([
         transforms.Resize((224,224)),
         transforms.ToTensor()
     ])
-
+    print("[DEBUG] dataset load", flush=True)
     datasets = {
         "cifar10": CIFAR10("data/cifar10", train=False, download=True, transform=transform),
         "flowers102": Flowers102("data/flowers", split="test", download=True, transform=transform),
