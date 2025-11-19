@@ -195,17 +195,24 @@ def main():
     #     x=images_tensor.numpy(),
     #     y=labels_tensor.numpy()
     # )
-    images_tensor = images_tensor.to(device)
-    labels_tensor = labels_tensor.to(device)
 
-    patched_images, patch = patch_attack.generate(
-        x=images_tensor,
-        y=labels_tensor
+
+    classifier._device = torch.device("cpu")
+    patch_attack._device = torch.device("cpu")
+
+    # --- convert data to numpy ---
+    images_np = images_tensor.cpu().numpy()
+    labels_np = labels_tensor.cpu().numpy()
+
+    patched_images_np, patch_np = patch_attack.generate(
+        x=images_np,
+        y=labels_np
     )
 
-# patch 是 torch tensor，要保存的话转 numpy
-    patch_np = patch.detach().cpu().numpy()
-   
+
+    
+
+
     # 保存 patch
     os.makedirs("artifacts", exist_ok=True)
     np.save("artifacts/universal_patch.npy", patch_np)
