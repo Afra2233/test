@@ -120,43 +120,36 @@ def main():
 
     # ---------------------------
     # 0. 设备
-    # ---------------------------
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print("Device:", device)
-
-    # ---------------------------
-    # 1. Transform
-    # ---------------------------
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
-        transforms.ToTensor(),
+        transforms.ToTensor(),          # 输出范围 [0, 1]
     ])
 
-    # ---------------------------
-    # 2. 加载 CLIP
-    # ---------------------------
-    clip_model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
-    for p in clip_model.parameters():
-        p.requires_grad = False
-    clip_model.eval()
+    # ============================================================
+    # PHASE 1: 在 CPU 上用 ART + CIFAR100 训练 universal patch
+    # ============================================================
+    train_device = "cpu"
+    print("=== Phase 1: Train patch on CPU ===")
 
-    # ---------------------------
-    # 3. CIFAR100（用于训练补丁）
-    # ---------------------------
+    # 1) 加载 CLIP 到 CPU
+    clip_model_cpu, _ = clip.load("ViT-B/32", device=train_device, jit=False)
+    for p in clip_model_cpu.parameters():
+        p.requires_grad = False
+    clip_model_cpu.eval()
+
+    # 2) CIFAR100 训练集（用来优化 patch）
     cifar100_train = CIFAR100("data/cifar100", train=True, download=True, transform=transform)
     train_loader = DataLoader(cifar100_train, batch_size=8, shuffle=True)
 
-    # CIFAR100 class text
+    # 3) 为 CIFAR100 构建 text features（在 CPU 上）
     cifar100_class_names = cifar100_train.classes
-    cifar100_text_features = build_text_features(cifar100_class_names, clip_model, device)
+    cifar100_text_features = build_text_features(cifar100_class_names, clip_model_cpu, train_device)
 
-    # ---------------------------
-    # 4. 构建 ART classifier
-    # ---------------------------
-    wrapped = ClipForART(clip_model, cifar100_text_features).to(device)
+    # 4) 包一层 CLIP wrapper 给 ART 用（仍然在 CPU）
+    wrapped_cpu = ClipForART(clip_model_cpu, cifar100_text_features).to(train_device)
 
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(wrapped.parameters(), lr=1e-4)  # 不训练 CLIP！
+    optimizer = optim.Adam(wrapped_cpu.parameters(), lr=1e-4)  # 实际上不会更新 CLIP，但 ART 需要一个 optimizer
 
     classifier = PyTorchClassifier(
         model=wrapped,
