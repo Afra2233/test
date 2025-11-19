@@ -11,6 +11,23 @@ from torch.utils.data import DataLoader
 import clip
 
 
+# ================================================
+# eval_patch.py — 显示每个数据集进度 + ETA（完全稳定版）
+# ================================================
+
+import os
+import torch
+import numpy as np
+from tqdm import tqdm
+from torchvision import transforms
+from torchvision.datasets import CIFAR10, Flowers102, Food101, DTD, OxfordIIITPet
+from torch.utils.data import DataLoader
+import clip
+
+
+# ------------------------------------------------
+# Apply adversarial patch
+# ------------------------------------------------
 def apply_patch_torch(images, patch_np, device):
     patch = torch.from_numpy(patch_np).float().to(device)
     B, C, H, W = images.shape
@@ -22,8 +39,11 @@ def apply_patch_torch(images, patch_np, device):
     return images
 
 
-def build_text_features(classes, clip_model, device):
-    prompts = [f"a photo of a {c.replace('_',' ')}" for c in classes]
+# ------------------------------------------------
+# Build zero-shot CLIP text embeddings
+# ------------------------------------------------
+def build_text_features(class_names, clip_model, device):
+    prompts = [f"a photo of a {c.replace('_',' ')}" for c in class_names]
     tokens = clip.tokenize(prompts).to(device)
     with torch.no_grad():
         txt = clip_model.encode_text(tokens)
@@ -31,25 +51,59 @@ def build_text_features(classes, clip_model, device):
     return txt
 
 
+# ------------------------------------------------
+# Unified class-name extraction
+# ------------------------------------------------
+def get_classes(ds):
+    """Return string class names for any of the supported datasets."""
+    # CIFAR10
+    if hasattr(ds, "classes"):
+        return ds.classes
+
+    # Flowers102: 没有 classes, 所以造 102 个名字
+    if isinstance(ds, Flowers102):
+        return [f"class_{i:05d}" for i in range(1, 103)]
+
+    # DTD 提供 labels 列表
+    if isinstance(ds, DTD):
+        return ds.labels
+
+    # Pets dataset
+    if isinstance(ds, OxfordIIITPet):
+        return ds.classes
+
+    # Food101 — class folders under images/
+    if isinstance(ds, Food101):
+        base = os.path.join(ds.root, "food-101", "images")
+        return sorted(os.listdir(base))
+
+    raise RuntimeError(f"Unsupported dataset type: {type(ds)}")
+
+
+# ------------------------------------------------
+# Evaluate dataset
+# ------------------------------------------------
 def evaluate_dataset(name, dataset, clip_model, device, patch_np, text_features):
     loader = DataLoader(dataset, batch_size=32, shuffle=False)
+
     total = 0
     clean_correct = 0
     patch_correct = 0
 
-    print(f"\n===== Evaluating {name} =====")
+    print(f"\n===== Evaluating {name} =====", flush=True)
 
-    # 只需要 tqdm，就能自动显示剩余时间
-    for images, labels in tqdm(loader, desc=f"{name}", ncols=120):
+    for images, labels in tqdm(loader, desc=name, ncols=100):
         images = images.to(device)
         labels = labels.to(device)
 
+        # clean
         with torch.no_grad():
             f_clean = clip_model.encode_image(images)
             f_clean = f_clean / f_clean.norm(dim=-1, keepdim=True)
             logits_clean = 100 * f_clean @ text_features.T
         clean_correct += (logits_clean.argmax(1) == labels).sum().item()
 
+        # patched
         patched = apply_patch_torch(images, patch_np, device)
         with torch.no_grad():
             f_p = clip_model.encode_image(patched)
@@ -59,91 +113,55 @@ def evaluate_dataset(name, dataset, clip_model, device, patch_np, text_features)
 
         total += labels.size(0)
 
-    print(f"{name} | clean={clean_correct/total:.4f} | patched={patch_correct/total:.4f}\n")
+    print(f"{name} | clean={clean_correct/total:.4f} | patched={patch_correct/total:.4f}\n",
+          flush=True)
 
 
+# ======================================================
+# main()
+# ======================================================
 def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print("Device:", device)
-    print("[DEBUG] enter main function", flush=True)
 
+    print("[DEBUG] main started", flush=True)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("Device:", device, flush=True)
+
+    # load CLIP
     clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
     clip_model.eval()
- 
-    print("[DEBUG] load clip", flush=True)
+    print("[DEBUG] CLIP loaded", flush=True)
+
+    # universal patch
     patch_np = np.load("artifacts/universal_patch.npy")
 
+    # transforms
     transform = transforms.Compose([
         transforms.Resize((224,224)),
         transforms.ToTensor()
     ])
-    print("[DEBUG] dataset load", flush=True)
-    # datasets = {
-    #     "cifar10": CIFAR10("data/cifar10", train=False, download=True, transform=transform),
-    #     "flowers102": Flowers102("data/flowers", split="test", download=True, transform=transform),
-    #     "dtd": DTD("data/dtd", split="test", download=True, transform=transform),
-    #     "pets": OxfordIIITPet("data/pets", split="test", download=True, transform=transform),
-    #     "food101": Food101("data/food", split="test", download=True, transform=transform),
-    # }
-    print("[DEBUG] start loading datasets...", flush=True)
 
-    datasets = {}
+    print("[DEBUG] dataset loading ...", flush=True)
 
-    # ----- CIFAR10 -----
-    try:
-        print("[DEBUG] loading CIFAR10 ...", flush=True)
-        datasets["cifar10"] = CIFAR10("data/cifar10", train=False, download=True, transform=transform)
-        print("[DEBUG] CIFAR10 loaded", flush=True)
-    except Exception as e:
-        print("[ERROR] CIFAR10 failed:", e, flush=True)
+    # IMPORTANT: use absolute paths !!
+    DATA_ROOT = "/storage/hpc/07/zhang303/conda_envs/stadv/data"
 
-
-    # ----- Flowers102 -----
-    try:
-        print("[DEBUG] loading Flowers102 ...", flush=True)
-        datasets["flowers102"] = Flowers102("data/flowers", split="test", download=True, transform=transform)
-        print("[DEBUG] Flowers102 loaded", flush=True)
-    except Exception as e:
-        print("[ERROR] Flowers102 failed:", e, flush=True)
-
-
-    # ----- DTD -----
-    try:
-        print("[DEBUG] loading DTD ...", flush=True)
-        datasets["dtd"] = DTD("data/dtd", split="test", download=True, transform=transform)
-        print("[DEBUG] DTD loaded", flush=True)
-    except Exception as e:
-        print("[ERROR] DTD failed:", e, flush=True)
-
-
-    # ----- Pets -----
-    try:
-        print("[DEBUG] loading Pets ...", flush=True)
-        datasets["pets"] = OxfordIIITPet("data/pets", split="test", download=True, transform=transform)
-        print("[DEBUG] Pets loaded", flush=True)
-    except Exception as e:
-        print("[ERROR] Pets failed:", e, flush=True)
-
-
-    # ----- Food101 -----
-    try:
-        print("[DEBUG] loading Food101 ...", flush=True)
-        datasets["food101"] = Food101("data/food", split="test", download=False, transform=transform)
-        print("[DEBUG] Food101 loaded", flush=True)
-    except Exception as e:
-        print("[ERROR] Food101 failed:", e, flush=True)
+    datasets = {
+        "cifar10": CIFAR10(f"{DATA_ROOT}/cifar10", train=False, download=False, transform=transform),
+        "flowers102": Flowers102(f"{DATA_ROOT}/flowers", split="test", download=False, transform=transform),
+        "dtd": DTD(f"{DATA_ROOT}/dtd", split="test", download=False, transform=transform),
+        "pets": OxfordIIITPet(f"{DATA_ROOT}/pets", split="test", download=False, transform=transform),
+        "food101": Food101(f"{DATA_ROOT}/food", split="test", download=False, transform=transform),
+    }
 
     print("[DEBUG] dataset loading finished", flush=True)
 
-    print("[DEBUG] program started", flush=True)
-
+    # Evaluate each dataset
+    print("[DEBUG] evaluation loop started", flush=True)
     for name, ds in datasets.items():
-        print("[DEBUG] dataload started", flush=True)
-        text_features = build_text_features(ds.classes, clip_model, device)
-        print("[DEBUG] evaluate started", flush=True)
+        class_names = get_classes(ds)
+        text_features = build_text_features(class_names, clip_model, device)
         evaluate_dataset(name, ds, clip_model, device, patch_np, text_features)
 
 
 if __name__ == "__main__":
-    print("[DEBUG] main started", flush=True)
     main()
