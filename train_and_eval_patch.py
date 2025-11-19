@@ -51,6 +51,17 @@ def apply_universal_patch(images_tensor, patch_np, patch_attack):
     return torch.from_numpy(patched_np)
 
 
+def apply_patch_torch(images, patch_np, device):
+    patch = torch.from_numpy(patch_np).to(device)
+    B, C, H, W = images.shape
+    _, h, w = patch.shape
+    y0 = H - h
+    x0 = W - w
+    images = images.clone()
+    images[:, :, y0:y0+h, x0:x0+w] = patch
+    return images
+
+
 # ===============================
 # 在一个数据集上评估 zero-shot
 # ===============================
@@ -86,7 +97,8 @@ def evaluate_dataset(name, dataset, clip_model, device, patch_np, patch_attack):
         clean_correct += (preds_clean == labels).sum().item()
 
         # ---------- 加补丁 ----------
-        patched_images = apply_universal_patch(images.cpu(), patch_np, patch_attack).to(device)
+        # patched_images = apply_universal_patch(images.cpu(), patch_np, patch_attack).to(device)
+        patched_images = apply_patch_torch(images, patch_np, device)
 
         with torch.no_grad():
             feats_p = clip_model.encode_image(patched_images)
@@ -173,7 +185,13 @@ def main():
         targeted=False,
         verbose=True
     )
+    print("\nSwitching ART + CLIP to CPU for patch training...")
 
+    clip_model = clip_model.to("cpu")
+    wrapped = wrapped.to("cpu")
+    classifier._device = torch.device("cpu")
+    patch_attack._device = torch.device("cpu")
+    device = "cpu"
     # ---------------------------
     # 6. 选取 N 张 CIFAR100 图训练补丁
     # ---------------------------
@@ -218,6 +236,11 @@ def main():
     np.save("artifacts/universal_patch.npy", patch_np)
     print("Saved patch → artifacts/universal_patch.npy")
 
+
+    print("\nSwitching CLIP back to GPU for evaluation...\n")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    clip_model = clip_model.to(device)
+    clip_model.eval()
     # ---------------------------
     # 7. 加载要评估的数据集
     # ---------------------------
