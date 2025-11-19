@@ -83,9 +83,12 @@ def main():
         "pets": OxfordIIITPet("data/pets", split="test", download=True, transform=transform),
         "food101": Food101("data/food", split="test", download=True, transform=transform),
     }
+    print("[DEBUG] program started", flush=True)
 
     for name, ds in datasets.items():
+        print("[DEBUG] dataload started", flush=True)
         text_features = build_text_features(ds.classes, clip_model, device)
+        print("[DEBUG] evaluate started", flush=True)
         evaluate_dataset(name, ds, clip_model, device, patch_np, text_features)
 
 
