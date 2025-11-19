@@ -128,7 +128,7 @@ def main():
     # ----- Food101 -----
     try:
         print("[DEBUG] loading Food101 ...", flush=True)
-        datasets["food101"] = Food101("data/food", split="test", download=True, transform=transform)
+        datasets["food101"] = Food101("data/food", split="test", download=False, transform=transform)
         print("[DEBUG] Food101 loaded", flush=True)
     except Exception as e:
         print("[ERROR] Food101 failed:", e, flush=True)
