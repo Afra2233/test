@@ -1,35 +1,61 @@
 #!/bin/bash
-#SBATCH -p gpu-short
+#SBATCH -p compute            # CPU partition，比 GPU 快排队
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --mem=10G
-#SBATCH --cpus-per-task=2
-#SBATCH --time=01:00:00
+#SBATCH --cpus-per-task=8     # 多线程解压更快
+#SBATCH --mem=16G
+#SBATCH --time=24:00:00       # 足够解压
+#SBATCH --job-name=extract_food101
 
 
-module load anaconda3/2022.05
-cd /scratch/hpc/07/zhang303/data
+set -e
 
-unzip tiny-imagenet-200.zip
+echo "[INFO] Preparing Food101 dataset..."
 
-cd tiny-imagenet-200
+DATA_DIR="data/food"
+TAR_PATH="$DATA_DIR/food-101.tar.gz"
+ZIP_PATH="$DATA_DIR/food-101.zip"
+TARGET_DIR="$DATA_DIR/food-101"
 
-# 修复 val 文件结构
-python3 << 'EOF'
-import os, shutil
+mkdir -p "$DATA_DIR"
 
-ann = open("val/val_annotations.txt").read().strip().split("\n")
-mapping = [x.split("\t") for x in ann]
+# ===============================
+# 1. Download food-101.tar.gz
+# ===============================
+if [ ! -f "$TAR_PATH" ]; then
+    echo "[INFO] Downloading food-101.tar.gz..."
+    wget -O "$TAR_PATH" "https://data.vision.ee.ethz.ch/cvl/food-101.tar.gz"
+else
+    echo "[INFO] TAR already exists: $TAR_PATH"
+fi
 
-os.makedirs("val_fixed", exist_ok=True)
-for img, cls, *_ in mapping:
-    src = os.path.join("val/images", img)
-    dst_dir = os.path.join("val_fixed", cls)
-    os.makedirs(dst_dir, exist_ok=True)
-    shutil.move(src, os.path.join(dst_dir, img))
+# ===============================
+# 2. Extract .tar.gz if folder missing
+# ===============================
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "[INFO] Extracting food-101.tar.gz ..."
+    tar -xzf "$TAR_PATH" -C "$DATA_DIR"
+else
+    echo "[INFO] Target directory already exists: $TARGET_DIR"
+fi
 
-shutil.rmtree("val")
-os.rename("val_fixed", "val")
-EOF
+# ===============================
+# 3. Optional: ZIP support (your request)
+# ===============================
 
-echo "tinyImageNet 准备完成"
+ZIP_URL="https://example.com/food-101.zip"
+# 如果你没有 zip 源，下面这段会自动跳过
+echo "[INFO] Checking for ZIP..."
+if [ ! -f "$ZIP_PATH" ]; then
+    echo "[INFO] Trying to download ZIP..."
+    if wget -O "$ZIP_PATH" "$ZIP_URL"; then
+        echo "[INFO] ZIP downloaded. Extracting..."
+        unzip -o "$ZIP_PATH" -d "$DATA_DIR"
+    else
+        echo "[WARN] ZIP download failed or URL invalid. Skipping ZIP."
+    fi
+else
+    echo "[INFO] ZIP already exists: $ZIP_PATH"
+fi
+
+echo "[INFO] Food101
