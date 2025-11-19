@@ -78,13 +78,63 @@ def main():
         transforms.ToTensor()
     ])
     print("[DEBUG] dataset load", flush=True)
-    datasets = {
-        "cifar10": CIFAR10("data/cifar10", train=False, download=True, transform=transform),
-        "flowers102": Flowers102("data/flowers", split="test", download=True, transform=transform),
-        "dtd": DTD("data/dtd", split="test", download=True, transform=transform),
-        "pets": OxfordIIITPet("data/pets", split="test", download=True, transform=transform),
-        "food101": Food101("data/food", split="test", download=True, transform=transform),
-    }
+    # datasets = {
+    #     "cifar10": CIFAR10("data/cifar10", train=False, download=True, transform=transform),
+    #     "flowers102": Flowers102("data/flowers", split="test", download=True, transform=transform),
+    #     "dtd": DTD("data/dtd", split="test", download=True, transform=transform),
+    #     "pets": OxfordIIITPet("data/pets", split="test", download=True, transform=transform),
+    #     "food101": Food101("data/food", split="test", download=True, transform=transform),
+    # }
+    print("[DEBUG] start loading datasets...", flush=True)
+
+    datasets = {}
+
+    # ----- CIFAR10 -----
+    try:
+        print("[DEBUG] loading CIFAR10 ...", flush=True)
+        datasets["cifar10"] = CIFAR10("data/cifar10", train=False, download=True, transform=transform)
+        print("[DEBUG] CIFAR10 loaded", flush=True)
+    except Exception as e:
+        print("[ERROR] CIFAR10 failed:", e, flush=True)
+
+
+    # ----- Flowers102 -----
+    try:
+        print("[DEBUG] loading Flowers102 ...", flush=True)
+        datasets["flowers102"] = Flowers102("data/flowers", split="test", download=True, transform=transform)
+        print("[DEBUG] Flowers102 loaded", flush=True)
+    except Exception as e:
+        print("[ERROR] Flowers102 failed:", e, flush=True)
+
+
+    # ----- DTD -----
+    try:
+        print("[DEBUG] loading DTD ...", flush=True)
+        datasets["dtd"] = DTD("data/dtd", split="test", download=True, transform=transform)
+        print("[DEBUG] DTD loaded", flush=True)
+    except Exception as e:
+        print("[ERROR] DTD failed:", e, flush=True)
+
+
+    # ----- Pets -----
+    try:
+        print("[DEBUG] loading Pets ...", flush=True)
+        datasets["pets"] = OxfordIIITPet("data/pets", split="test", download=True, transform=transform)
+        print("[DEBUG] Pets loaded", flush=True)
+    except Exception as e:
+        print("[ERROR] Pets failed:", e, flush=True)
+
+
+    # ----- Food101 -----
+    try:
+        print("[DEBUG] loading Food101 ...", flush=True)
+        datasets["food101"] = Food101("data/food", split="test", download=True, transform=transform)
+        print("[DEBUG] Food101 loaded", flush=True)
+    except Exception as e:
+        print("[ERROR] Food101 failed:", e, flush=True)
+
+    print("[DEBUG] dataset loading finished", flush=True)
+
     print("[DEBUG] program started", flush=True)
 
     for name, ds in datasets.items():
