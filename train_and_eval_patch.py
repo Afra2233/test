@@ -15,7 +15,19 @@ import clip
 from art.estimators.classification import PyTorchClassifier
 from art.attacks.evasion import AdversarialPatchPyTorch
 
+import torchvision.transforms.functional as TF
 
+# ---- 这里是 monkey patch ----
+_real_resize = TF.resize
+
+def safe_resize(img, size, *args, **kwargs):
+    if isinstance(size, (list, tuple)):
+        size = tuple(int(s) for s in size)
+    elif isinstance(size, np.generic):
+        size = int(size)
+    return _real_resize(img, size, *args, **kwargs)
+
+TF.resize = safe_resize
 # -------------------------
 # CLIP Wrapper 给 ART 用
 # -------------------------
