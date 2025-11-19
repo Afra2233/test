@@ -191,11 +191,21 @@ def main():
     labels_tensor = torch.cat(all_labels)[:max_images]
 
     # ART 使用 numpy
-    patched_images_np, patch_np = patch_attack.generate(
-        x=images_tensor.numpy(),
-        y=labels_tensor.numpy()
+    # patched_images_np, patch_np = patch_attack.generate(
+    #     x=images_tensor.numpy(),
+    #     y=labels_tensor.numpy()
+    # )
+    images_tensor = images_tensor.to(device)
+    labels_tensor = labels_tensor.to(device)
+
+    patched_images, patch = patch_attack.generate(
+        x=images_tensor,
+        y=labels_tensor
     )
 
+# patch 是 torch tensor，要保存的话转 numpy
+    patch_np = patch.detach().cpu().numpy()
+   
     # 保存 patch
     os.makedirs("artifacts", exist_ok=True)
     np.save("artifacts/universal_patch.npy", patch_np)
