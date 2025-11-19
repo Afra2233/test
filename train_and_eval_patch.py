@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 import clip
 from art.estimators.classification import PyTorchClassifier
 from art.attacks.evasion import AdversarialPatchPyTorch
-
+import art
 
 # ===============================
 # CLIP Wrapper 给 ART 用
@@ -158,8 +158,10 @@ def main():
     # ---------------------------
     # 5. 配置 adversarial patch
     # ---------------------------
+   
+    print(art.__version__)
     patch_attack = AdversarialPatchPyTorch(
-        classifier=classifier,
+        estimator=classifier,
         patch_shape=(3, 112, 112),
         rotation_max=0.0,
         scale_min=0.3,
@@ -168,6 +170,8 @@ def main():
         max_iter=300,
         batch_size=8,
         optimizer="pgd",
+        targeted=False,
+        verbose=True
     )
 
     # ---------------------------
