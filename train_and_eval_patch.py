@@ -194,8 +194,8 @@ def main():
     wrapped = wrapped.to("cpu")
     classifier._device = torch.device("cpu")
     patch_attack._device = torch.device("cpu")
-    for p in classifier._preprocessing_operations:
-        p._device = torch.device("cpu")
+    # for p in classifier.preprocessing_operations:
+    #     p._device = torch.device("cpu")
     device = "cpu"
     # ---------------------------
     # 6. 选取 N 张 CIFAR100 图训练补丁
