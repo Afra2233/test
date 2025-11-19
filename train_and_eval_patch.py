@@ -164,8 +164,8 @@ def main():
         optimizer=optimizer,
         input_shape=(3, 224, 224),
         nb_classes=len(cifar100_class_names),
-        # clip_values=(0, 1)
-        clip_values=None,              # ← 禁止默认 preprocessing
+        clip_values=(0, 1),
+        # clip_values=None,              # ← 禁止默认 preprocessing
         preprocessing_defences=[],     # ← 关键：禁止所有 preprocessing
         postprocessing_defences=[]
     )
