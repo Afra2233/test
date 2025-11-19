@@ -164,7 +164,10 @@ def main():
         optimizer=optimizer,
         input_shape=(3, 224, 224),
         nb_classes=len(cifar100_class_names),
-        clip_values=(0, 1)
+        # clip_values=(0, 1)
+        clip_values=None,              # ← 禁止默认 preprocessing
+        preprocessing_defences=[],     # ← 关键：禁止所有 preprocessing
+        postprocessing_defences=[]
     )
 
     # ---------------------------
@@ -191,6 +194,8 @@ def main():
     wrapped = wrapped.to("cpu")
     classifier._device = torch.device("cpu")
     patch_attack._device = torch.device("cpu")
+    for p in classifier._preprocessing_operations:
+        p._device = torch.device("cpu")
     device = "cpu"
     # ---------------------------
     # 6. 选取 N 张 CIFAR100 图训练补丁
