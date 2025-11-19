@@ -1,8 +1,4 @@
 # ================================================
-# eval_patch.py — 显示每个数据集进度 + ETA（完全稳定版）
-# ================================================
-
-# ================================================
 # eval_patch.py — 显示每个数据集进度 + 剩余时间
 # ================================================
 import os
@@ -14,11 +10,9 @@ from torchvision.datasets import CIFAR10, Flowers102, Food101, DTD, OxfordIIITPe
 from torch.utils.data import DataLoader
 import clip
 
-DATA_ROOT = "./data"   # 自动使用当前目录下的 data 文件夹
-
 
 # ------------------------------------------------
-# apply patch (PyTorch only)
+# apply patch using PyTorch
 # ------------------------------------------------
 def apply_patch_torch(images, patch_np, device):
     patch = torch.from_numpy(patch_np).float().to(device)
@@ -32,108 +26,131 @@ def apply_patch_torch(images, patch_np, device):
 
 
 # ------------------------------------------------
-# Safe class list extraction
+# class list resolver for each dataset
 # ------------------------------------------------
-def get_class_list(ds):
-    """Different datasets store labels differently."""
-    if hasattr(ds, "classes"):
+def get_class_list(name, ds):
+    """Return class names for each dataset"""
+
+    # CIFAR10 — OK
+    if name == "cifar10":
         return ds.classes
-    if hasattr(ds, "labels"):
-        return ds.labels
-    if hasattr(ds, "categories"):
-        return ds.categories
 
-    # fallback
-    raise RuntimeError("Dataset has no class list attribute.")
+    # Flowers102 — torchvision does NOT provide class names
+    if name == "flowers102":
+        return [f"a flower class {i}" for i in range(102)]
+
+    # DTD — extract class names from label files
+    if name == "dtd":
+        label_dir = os.path.join(ds.root, "dtd", "labels")
+        files = sorted([f for f in os.listdir(label_dir) if f.endswith(".txt")])
+        class_names = [f[:-4] for f in files]  # remove .txt
+        return class_names
+
+    # Pets — torchvision uses internal attribute "_classes"
+    if name == "pets":
+        return ds._classes
+
+    # Food101 — OK
+    if name == "food101":
+        return ds.classes
+
+    raise RuntimeError(f"[FATAL] Unknown dataset: {name}")
 
 
 # ------------------------------------------------
-# build CLIP zero-shot features
+# build CLIP text features
 # ------------------------------------------------
 def build_text_features(class_names, clip_model, device):
-    prompts = [f"a photo of a {c.replace('_', ' ')}" for c in class_names]
+    prompts = [f"a photo of a {c.replace('_',' ')}" for c in class_names]
     tokens = clip.tokenize(prompts).to(device)
     with torch.no_grad():
-        txt = clip_model.encode_text(tokens)
-        txt = txt / txt.norm(dim=-1, keepdim=True)
-    return txt
+        text_feats = clip_model.encode_text(tokens)
+        text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
+    return text_feats
 
 
 # ------------------------------------------------
-# Evaluate a dataset
+# Evaluate dataset
 # ------------------------------------------------
-def evaluate_dataset(name, dataset, clip_model, device, patch_np, text_features):
-    loader = DataLoader(dataset, batch_size=32, shuffle=False)
+def evaluate_dataset(name, ds, clip_model, device, patch_np, text_features):
+    loader = DataLoader(ds, batch_size=32, shuffle=False)
     total = 0
     clean_correct = 0
     patch_correct = 0
 
-    print(f"\n===== Evaluating {name} =====", flush=True)
+    print(f"\n===== Evaluating {name} =====")
 
+    # tqdm 自动显示 ETA
     for images, labels in tqdm(loader, desc=f"{name}", ncols=120):
-        images, labels = images.to(device), labels.to(device)
+        images = images.to(device)
+        labels = labels.to(device)
 
+        # ---------- clean ----------
         with torch.no_grad():
-            f_clean = clip_model.encode_image(images)
-            f_clean = f_clean / f_clean.norm(dim=-1, keepdim=True)
-            logits_clean = 100 * f_clean @ text_features.T
-        clean_correct += (logits_clean.argmax(1) == labels).sum().item()
+            f = clip_model.encode_image(images)
+            f = f / f.norm(dim=-1, keepdim=True)
+            logits = 100 * f @ text_features.T
+        clean_correct += (logits.argmax(1) == labels).sum().item()
 
+        # ---------- patched ----------
         patched = apply_patch_torch(images, patch_np, device)
         with torch.no_grad():
-            f_p = clip_model.encode_image(patched)
-            f_p = f_p / f_p.norm(dim=-1, keepdim=True)
-            logits_p = 100 * f_p @ text_features.T
-        patch_correct += (logits_p.argmax(1) == labels).sum().item()
+            f2 = clip_model.encode_image(patched)
+            f2 = f2 / f2.norm(dim=-1, keepdim=True)
+            logits2 = 100 * f2 @ text_features.T
+        patch_correct += (logits2.argmax(1) == labels).sum().item()
 
         total += labels.size(0)
 
-    print(f"{name} | clean={clean_correct/total:.4f} | patched={patch_correct/total:.4f}\n", flush=True)
+    print(f"{name}: clean={clean_correct/total:.4f} | patched={patch_correct/total:.4f}\n")
 
 
 # ======================================================
 # main()
 # ======================================================
 def main():
+    print("[DEBUG] main() started", flush=True)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Device:", device, flush=True)
 
+    # Load CLIP
     clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
     clip_model.eval()
+    print("[DEBUG] CLIP loaded", flush=True)
 
+    # Load patch
     patch_np = np.load("artifacts/universal_patch.npy")
+    print("[DEBUG] Patch loaded", flush=True)
 
+    # Common transform
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor()
     ])
 
-    # load datasets safely
-    datasets = {}
-    dataset_defs = {
-        "cifar10": lambda: CIFAR10(f"{DATA_ROOT}/cifar10", train=False, download=False, transform=transform),
-        "flowers102": lambda: Flowers102(f"{DATA_ROOT}/flowers", split="test", download=False, transform=transform),
-        "dtd": lambda: DTD(f"{DATA_ROOT}/dtd", split="test", download=False, transform=transform),
-        "pets": lambda: OxfordIIITPet(f"{DATA_ROOT}/pets", split="test", download=False, transform=transform),
-        "food101": lambda: Food101(f"{DATA_ROOT}/food", split="test", download=False, transform=transform),
+    DATA_ROOT = "data"
+    print("[DEBUG] Loading datasets ...", flush=True)
+
+    # All datasets — no download to avoid stuck
+    datasets = {
+        "cifar10": CIFAR10(f"{DATA_ROOT}/cifar10", train=False, download=False, transform=transform),
+        "flowers102": Flowers102(f"{DATA_ROOT}/flowers", split="test", download=False, transform=transform),
+        "dtd": DTD(f"{DATA_ROOT}/dtd", split="test", download=False, transform=transform),
+        "pets": OxfordIIITPet(f"{DATA_ROOT}/pets", split="test", download=False, transform=transform),
+        "food101": Food101(f"{DATA_ROOT}/food", split="test", download=False, transform=transform),
     }
 
-    print("[DEBUG] dataset loading started", flush=True)
-    for name, fn in dataset_defs.items():
-        try:
-            datasets[name] = fn()
-            print(f"[DEBUG] {name} loaded", flush=True)
-        except Exception as e:
-            print(f"[ERROR] {name} failed: {e}", flush=True)
+    print("[DEBUG] All datasets loaded", flush=True)
+    print("[DEBUG] Starting evaluation ...", flush=True)
 
-    print("[DEBUG] dataset loading finished", flush=True)
-
-    # evaluate all loaded datasets
+    # Evaluate each dataset
     for name, ds in datasets.items():
-        print("[DEBUG] dataload started", flush=True)
-        class_names = get_class_list(ds)
+        print(f"[DEBUG] Preparing text features for {name}", flush=True)
+        class_names = get_class_list(name, ds)
         text_features = build_text_features(class_names, clip_model, device)
-        print("[DEBUG] evaluate started", flush=True)
+
+        print(f"[DEBUG] Evaluating {name}", flush=True)
         evaluate_dataset(name, ds, clip_model, device, patch_np, text_features)
 
 
