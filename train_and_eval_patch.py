@@ -97,11 +97,24 @@ def main():
         optimizer=optimizer,
         input_shape=(3, 224, 224),
         nb_classes=len(class_names),
-        clip_values=(0.0, 1.0)
+        clip_values=(0.0, 1.0),
+        preprocessing_defences=None,
+        postprocessing_defences=None,
     )
     # Force CPU
     classifier._device = torch.device("cpu")
+      # --------------------------------------------------------
+    # ⭐ Patch 修复：让 ART 所有 preprocessing tensors 强制在 CPU
+    # --------------------------------------------------------
+    if hasattr(classifier, "preprocessing_operations") and classifier.preprocessing_operations:
+        for p in classifier.preprocessing_operations:
+            if hasattr(p, "_device"):
+                p._device = torch.device("cpu")
 
+    if hasattr(classifier, "_preprocessing_operations") and classifier._preprocessing_operations:
+        for p in classifier._preprocessing_operations:
+            if hasattr(p, "_device"):
+                p._device = torch.device("cpu")
     # 5. Patch attack
     patch_attack = AdversarialPatchPyTorch(
         estimator=classifier,
