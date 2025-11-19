@@ -1,5 +1,5 @@
 # ================================================
-# train_patch.py — 在 CPU 上训练 CLIP adversarial patch（ART）
+# train_patch.py — FULL CPU-ONLY patch trainer
 # ================================================
 import os
 import torch
@@ -17,17 +17,21 @@ from art.attacks.evasion import AdversarialPatchPyTorch
 
 import torchvision.transforms.functional as TF
 
-# ---- 这里是 monkey patch ----
+# --------------------------------------
+# Fix torchvision resize receiving np.int64
+# --------------------------------------
 _real_resize = TF.resize
 
 def safe_resize(img, size, *args, **kwargs):
     if isinstance(size, (list, tuple)):
         size = tuple(int(s) for s in size)
-    elif isinstance(size, np.generic):
+    else:
         size = int(size)
     return _real_resize(img, size, *args, **kwargs)
 
 TF.resize = safe_resize
+
+
 # -------------------------
 # CLIP Wrapper 给 ART 用
 # -------------------------
@@ -35,20 +39,18 @@ class ClipForART(torch.nn.Module):
     def __init__(self, clip_model, text_features):
         super().__init__()
         self.clip_model = clip_model
-        
-        self.text_features = text_features.to("cpu")
+        self.text_features = text_features  # must be CPU tensor
 
     def forward(self, images):
+        images = images.to("cpu")
         feats = self.clip_model.encode_image(images)
         feats = feats / feats.norm(dim=-1, keepdim=True)
-        feats = feats.to(self.text_features.device)         # ★ 强制 feats 跟 text_features 在同一个设备
         logits = 100 * feats @ self.text_features.T
         return logits
 
 
-
 # -------------------------
-# Text features (zero-shot)
+# Zero-shot text features
 # -------------------------
 def build_text_features(class_names, clip_model):
     prompts = [f"a photo of a {c.replace('_', ' ')}" for c in class_names]
@@ -57,41 +59,36 @@ def build_text_features(class_names, clip_model):
     with torch.no_grad():
         txt = clip_model.encode_text(tokens)
         txt = txt / txt.norm(dim=-1, keepdim=True)
+
     return txt.cpu()
 
 
 # ======================================================
-# main()
+# main
 # ======================================================
 def main():
 
-    # ================
-    # transforms
-    # ================
+    print("=== Training universal patch on CPU ===")
+
+    # 1. transforms
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
     ])
 
-    # ================
-    # load CLIP (CPU only)
-    # ================
+    # 2. Load CLIP on CPU
     clip_model, _ = clip.load("ViT-B/32", device="cpu", jit=False)
     clip_model.eval()
 
-    # ================
-    # CIFAR100 data
-    # ================
+    # 3. CIFAR100
     cifar100 = CIFAR100("data/cifar100", train=True, download=True, transform=transform)
     loader = DataLoader(cifar100, batch_size=8, shuffle=True)
 
     class_names = cifar100.classes
-    text_features = build_text_features(class_names, clip_model)  # always CPU
+    text_features = build_text_features(class_names, clip_model)  # CPU tensor
 
-    # ================
-    # ART classifier (CPU ONLY)
-    # ================
-    wrapped_cpu = ClipForART(clip_model, text_features)
+    # 4. Wrap CLIP for ART
+    wrapped_cpu = ClipForART(clip_model, text_features).to("cpu")
     optimizer = optim.Adam(wrapped_cpu.parameters(), lr=1e-4)
 
     classifier = PyTorchClassifier(
@@ -100,14 +97,12 @@ def main():
         optimizer=optimizer,
         input_shape=(3, 224, 224),
         nb_classes=len(class_names),
-        clip_values=(0.0, 1.0),
-        preprocessing_defences=None,
-        postprocessing_defences=None
+        clip_values=(0.0, 1.0)
     )
+    # Force CPU
+    classifier._device = torch.device("cpu")
 
-    # ================
-    # Patch Attack
-    # ================
+    # 5. Patch attack
     patch_attack = AdversarialPatchPyTorch(
         estimator=classifier,
         patch_shape=(3, 112, 112),
@@ -120,38 +115,38 @@ def main():
         targeted=False,
         verbose=True
     )
+    patch_attack._device = torch.device("cpu")  # 强制 CPU
 
-    # ================
-    # Collect training subset
-    # ================
+    # 6. Collect training data
     imgs, lbs = [], []
     max_images = 512
 
     for x, y in loader:
-        imgs.append(x)
-        lbs.append(y)
+        imgs.append(x.cpu())
+        lbs.append(y.cpu())
         if sum(t.size(0) for t in imgs) >= max_images:
             break
 
     x_np = torch.cat(imgs)[:max_images].numpy()
     y_np = torch.cat(lbs)[:max_images].numpy()
 
-    # ================
-    # Train Patch
-    # ================
+    # Guarantee numpy is CPU — important
+    x_np = np.ascontiguousarray(x_np)
+    y_np = np.ascontiguousarray(y_np)
+
+    # 7. Train patch
     patched_imgs, patch_np = patch_attack.generate(x=x_np, y=y_np)
 
-    # ================
-    # Save patch
-    # ================
+    # 8. Save patch
     os.makedirs("artifacts", exist_ok=True)
     np.save("artifacts/universal_patch.npy", patch_np)
-    print("\nSaved → artifacts/universal_patch.npy\n")
+
+    print("\nSaved → artifacts/universal_patch.npy")
+    print("Training done.\n")
 
 
 if __name__ == "__main__":
     main()
-
 
 # #!/usr/bin/env python3
 # """
