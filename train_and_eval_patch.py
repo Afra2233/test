@@ -23,13 +23,16 @@ class ClipForART(torch.nn.Module):
     def __init__(self, clip_model, text_features):
         super().__init__()
         self.clip_model = clip_model
-        self.text_features = text_features
+        
+        self.text_features = text_features.to("cpu")
 
     def forward(self, images):
         feats = self.clip_model.encode_image(images)
         feats = feats / feats.norm(dim=-1, keepdim=True)
+        feats = feats.to(self.text_features.device)         # ★ 强制 feats 跟 text_features 在同一个设备
         logits = 100 * feats @ self.text_features.T
         return logits
+
 
 
 # -------------------------
