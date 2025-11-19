@@ -157,7 +157,7 @@ def main():
     # 8. 保存 patch
     os.makedirs("artifacts", exist_ok=True)
     np.save("artifacts/universal_patch.npy", patch_np)
-    print("\nSaved universal patch → artifacts/universal_patch.npy\n")
+    print("\nSaved universal patch :artifacts/universal_patch.npy\n")
 
 
 if __name__ == "__main__":

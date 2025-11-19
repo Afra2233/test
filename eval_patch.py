@@ -8,12 +8,22 @@ import numpy as np
 from torchvision import transforms
 from torchvision.datasets import CIFAR10, Flowers102, Food101, DTD, OxfordIIITPet
 from torch.utils.data import DataLoader
-
 import clip
 
 
 # ------------------------------------------------
-# apply patch (PyTorch only)
+# unify class names extraction
+# ------------------------------------------------
+def get_class_names(dataset):
+    if hasattr(dataset, "classes"):
+        return dataset.classes
+    if hasattr(dataset, "class_to_idx"):
+        return list(dataset.class_to_idx.keys())
+    raise ValueError(f"Dataset {dataset} has no class names!")
+
+
+# ------------------------------------------------
+# apply patch using PyTorch only
 # ------------------------------------------------
 def apply_patch_torch(images, patch_np, device):
     patch = torch.from_numpy(patch_np).float().to(device)
@@ -41,7 +51,7 @@ def build_text_features(class_names, clip_model, device):
 
 
 # ------------------------------------------------
-# Evaluate a dataset
+# Evaluate
 # ------------------------------------------------
 def evaluate_dataset(name, dataset, clip_model, device, patch_np, text_features):
     loader = DataLoader(dataset, batch_size=32, shuffle=False)
@@ -79,7 +89,6 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Device:", device)
 
-    # load CLIP
     clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
     clip_model.eval()
 
@@ -92,18 +101,18 @@ def main():
         transforms.ToTensor()
     ])
 
-    # test datasets
     datasets = {
         "cifar10": CIFAR10("data/cifar10", train=False, download=True, transform=transform),
         "flowers102": Flowers102("data/flowers", split="test", download=True, transform=transform),
         "dtd": DTD("data/dtd", split="test", download=True, transform=transform),
         "pets": OxfordIIITPet("data/pets", split="test", download=True, transform=transform),
-        "food101": Food101("data/food", split="test", download=True, transform=transform)
+        "food101": Food101("data/food", split="test", download=True, transform=transform),
     }
 
     # evaluate
     for name, ds in datasets.items():
-        text_features = build_text_features(ds.classes, clip_model, device)
+        class_names = get_class_names(ds)
+        text_features = build_text_features(class_names, clip_model, device)
         evaluate_dataset(name, ds, clip_model, device, patch_np, text_features)
 
 
