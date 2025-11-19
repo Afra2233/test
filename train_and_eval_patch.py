@@ -140,7 +140,8 @@ def main():
     # 2) CIFAR100 用于训练补丁
     cifar100_train = CIFAR100("data/cifar100", train=True, download=True, transform=transform)
     train_loader = DataLoader(cifar100_train, batch_size=8, shuffle=True)
-
+    cifar100_text_features = cifar100_text_features.to("cpu")
+    
     # 3) 文本特征（zero-shot）
     cifar100_class_names = cifar100_train.classes
     cifar100_text_features = build_text_features(cifar100_class_names, clip_model_cpu, cpu_device)
