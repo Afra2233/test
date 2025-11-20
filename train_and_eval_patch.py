@@ -150,7 +150,7 @@ def main():
     # Save patch
     # --------------------------------------------------------------
     os.makedirs("artifacts", exist_ok=True)
-    np.save("artifacts/universal_patch_tinyimagenet.npy", patch.detach().cpu().numpy())
+    np.save("artifacts/universal_patch_tinyimagenet_2.npy", patch.detach().cpu().numpy())
     print("\nSaved patch to artifacts/universal_patch_tinyimagenet_2.npy\n")
     
 
