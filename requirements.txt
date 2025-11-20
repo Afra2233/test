@@ -39,3 +39,4 @@ ftfy
 
 # ---- Optional but useful ----
 pandas
+h5py

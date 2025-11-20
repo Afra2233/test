@@ -58,8 +58,7 @@ def get_class_list(name, ds):
     if name == "food101":
         return ds.classes
     
-    if name == "pcam":
-        return ["tumor", "normal"]   # PCAM 是 2 类
+
 
     if name == "fgvc_aircraft":
         return ds.classes  # torchvision 自带 class names
@@ -178,8 +177,8 @@ def main():
         "food101": Food101(f"{DATA_ROOT}/food", split="test", download=True, transform=transform),
         "cifar100": CIFAR100(f"{DATA_ROOT}/cifar100", train=False, download=True, transform=transform),
         # "stanford_cars": StanfordCars(f"{DATA_ROOT}/stanford_cars", split="test", download=True, transform=transform),
-        "pcam": PCAM(f"{DATA_ROOT}/pcam", split="test",
-                 download=True, transform=transform),
+        # "pcam": PCAM(f"{DATA_ROOT}/pcam", split="test",
+        #          download=True, transform=transform),
 
         "fgvc_aircraft": FGVCAircraft(f"{DATA_ROOT}/fgvc_aircraft", split="test",
                                     download=True, transform=transform),
