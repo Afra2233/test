@@ -64,7 +64,8 @@ def get_class_list(name, ds):
 # ------------------------------------------------
 # build CLIP text features
 # ------------------------------------------------
-def build_text_features(class_names, clip_model, device): if name in ["cifar10",
+def build_text_features(class_names, clip_model, device): 
+   
     prompts = [f"a photo of a {c.replace('_',' ')}" for c in class_names]
     tokens = clip.tokenize(prompts).to(device)
     with torch.no_grad():
