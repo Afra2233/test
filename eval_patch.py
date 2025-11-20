@@ -136,7 +136,7 @@ def main():
     datasets = {
         "cifar10": CIFAR10(f"{DATA_ROOT}/cifar10", train=False, download=True, transform=transform),
         "flowers102": Flowers102(f"{DATA_ROOT}/flowers", split="test", download=True, transform=transform),
-        "dtd": DTD(f"{DATA_ROOT}/dtd", split="test", download=True, transform=transform),
+        # "dtd": DTD(f"{DATA_ROOT}/dtd", split="test", download=True, transform=transform),
         "pets": OxfordIIITPet(f"{DATA_ROOT}/pets", split="test", download=True, transform=transform),
         "food101": Food101(f"{DATA_ROOT}/food", split="test", download=True, transform=transform),
     }
