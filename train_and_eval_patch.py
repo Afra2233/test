@@ -1,107 +1,200 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import transforms
-from torchvision.datasets import ImageFolder
+from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 import clip
 import numpy as np
+import random
+from tqdm import tqdm
 
-# 1. 准备数据 & CLIP
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-])
-
-imagenet_train = ImageFolder("data/imagenet/train", transform=transform)
-loader = DataLoader(imagenet_train, batch_size=32, shuffle=True, num_workers=8)
-
-clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
-clip_model.eval()
-
-# 用 ImageFolder 的类名简单造 text prompts（更讲究的可以自己准备 class name 列表）
-class_names = imagenet_train.classes
-prompts = [f"a photo of a {c}" for c in class_names]
-tokens = clip.tokenize(prompts).to(device)
-with torch.no_grad():
-    text_features = clip_model.encode_text(tokens)
-    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-
-# 2. 定义可学习的 patch（112x112）
-patch_size = 112
-patch = nn.Parameter(torch.rand(3, patch_size, patch_size, device=device))
-
-optimizer = optim.Adam([patch], lr=5e-2)
-criterion = nn.CrossEntropyLoss()
-
-def apply_patch_eot(images, patch):
-    """
-    EOT: 对每张图随机位置/缩放贴 patch
-    images: [B, 3, H, W]
-    patch:  [3, P, P]
-    """
+# -----------------------------------------------------------
+# 1. Apply patch with EOT (random location + random scale)
+# -----------------------------------------------------------
+def apply_patch_eot(images, patch, scale_min=0.3, scale_max=0.7):
     B, C, H, W = images.shape
     patched = images.clone()
+    P = patch.size(-1)
 
     for i in range(B):
-        # 随机缩放比例
-        scale = torch.empty(1).uniform_(0.3, 0.7).item()
-        new_size = int(patch_size * scale)
+        scale = random.uniform(scale_min, scale_max)
+        new_size = int(P * scale)
 
-        # resize patch
-        p = torch.nn.functional.interpolate(
-            patch.unsqueeze(0), size=(new_size, new_size), mode="bilinear", align_corners=False
+        p = F.interpolate(
+            patch.unsqueeze(0),
+            size=(new_size, new_size),
+            mode="bilinear",
+            align_corners=False
         )[0]
 
-        # 随机位置
         max_y = H - new_size
         max_x = W - new_size
-        y0 = torch.randint(0, max_y + 1, (1,)).item()
-        x0 = torch.randint(0, max_x + 1, (1,)).item()
+        y0 = random.randint(0, max_y)
+        x0 = random.randint(0, max_x)
 
         patched[i, :, y0:y0+new_size, x0:x0+new_size] = p
 
-    return torch.clamp(patched, 0.0, 1.0)
+    return torch.clamp(patched, 0, 1)
 
-# 3. 训练循环（untargeted + CLIP-friendly loss + EOT）
-for epoch in range(epochs):
-    for images, labels in loader:
-        images = images.to(device)
-        labels = labels.to(device)
 
-        # EOT: 每个 batch 调用随机贴法
-        images_patched = apply_patch_eot(images, patch)
+# -----------------------------------------------------------
+# 2. Build CLIP text features
+# -----------------------------------------------------------
+def build_text_features(classes, clip_model, device):
+    prompts = [f"a photo of a {c.replace('_', ' ')}" for c in classes]
+    tokens = clip.tokenize(prompts).to(device)
+    with torch.no_grad():
+        txt = clip_model.encode_text(tokens)
+        txt = txt / txt.norm(dim=-1, keepdim=True)
+    return txt.to(device)
 
-        with torch.no_grad():
-            # clean logits 其实不用每步算，但如果你想做对比可以算
-            f_clean = clip_model.encode_image(images)
-            f_clean = f_clean / f_clean.norm(dim=-1, keepdim=True)
-            logits_clean = 100 * f_clean @ text_features.T
 
-        # patched logits
-        f_patched = clip_model.encode_image(images_patched)
-        f_patched = f_patched / f_patched.norm(dim=-1, keepdim=True)
-        logits_patched = 100 * f_patched @ text_features.T
+# ===========================================================
+# 3. Main: Train universal patch on TinyImageNet
+# ===========================================================
+def main():
 
-        # untargeted CLIP-friendly loss: 反向 CE（最大化 CE）
-        ce = criterion(logits_patched, labels)
-        loss = -ce
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("Training device:", device)
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    # --------------------------------------------------------------
+    # Load CLIP
+    # --------------------------------------------------------------
+    clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
+    clip_model.eval()
 
-        # 保证 patch 始终在 [0,1]
-        with torch.no_grad():
-            patch.clamp_(0.0, 1.0)
+    # --------------------------------------------------------------
+    # TinyImageNet dataset
+    # --------------------------------------------------------------
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+    ])
 
-    print(f"Epoch {epoch}: loss={loss.item():.4f}")
+    dataset = datasets.TinyImageNet(
+        root="data",
+        split="train",
+        download=False,  # 你已经手动下载过
+        transform=transform
+    )
 
-# 4. 训练完保存 patch
-np.save("artifacts/universal_patch_imagenet_strong.npy", patch.detach().cpu().numpy())
+    loader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
+    class_names = dataset.classes
+    print(f"TinyImageNet loaded. Total samples = {len(dataset)}")
 
+    # --------------------------------------------------------------
+    # Build CLIP text features
+    # --------------------------------------------------------------
+    text_features = build_text_features(class_names, clip_model, device)
+
+    # --------------------------------------------------------------
+    # Learnable patch
+    # --------------------------------------------------------------
+    PATCH_SIZE = 112
+    patch = nn.Parameter(torch.rand(3, PATCH_SIZE, PATCH_SIZE, device=device))
+
+    optimizer = optim.Adam([patch], lr=5e-2)
+    criterion = nn.CrossEntropyLoss()
+
+    EPOCHS = 5
+
+    # --------------------------------------------------------------
+    # Training loop with progress bars
+    # --------------------------------------------------------------
+    for epoch in range(EPOCHS):
+
+        print(f"\n===== Epoch {epoch+1}/{EPOCHS} =====")
+
+        batch_bar = tqdm(loader, desc=f"Training", ncols=120)
+
+        running_loss = 0
+
+        for batch_idx, (images, labels) in enumerate(batch_bar):
+
+            images = images.to(device)
+            labels = labels.to(device)
+
+            # EOT
+            images_patched = apply_patch_eot(images, patch)
+
+            # patched forward
+            feats_p = clip_model.encode_image(images_patched)
+            feats_p = feats_p / feats_p.norm(dim=-1, keepdim=True)
+            logits_p = 100 * feats_p @ text_features.T
+
+            # untargeted CLIP-friendly loss: maximize CE
+            loss_ce = criterion(logits_p, labels)
+            loss = -loss_ce
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # keep patch valid
+            with torch.no_grad():
+                patch.clamp_(0, 1)
+
+            running_loss += loss.item()
+
+            # Update tqdm bar info
+            batch_bar.set_postfix(loss=f"{loss.item():.4f}")
+
+        print(f"Epoch {epoch+1} avg loss: {running_loss/len(loader):.4f}")
+
+    # --------------------------------------------------------------
+    # Save patch
+    # --------------------------------------------------------------
+    os.makedirs("artifacts", exist_ok=True)
+    np.save("artifacts/universal_patch_tinyimagenet.npy", patch.detach().cpu().numpy())
+    print("\nSaved patch to artifacts/universal_patch_tinyimagenet.npy\n")
+        # --------------------------------------------------------------
+    # 9. Visualize patch and patched image
+    # --------------------------------------------------------------
+    print("Saving patch visualization...")
+
+    import torchvision.transforms.functional as TF
+    from PIL import Image
+
+    os.makedirs("artifacts", exist_ok=True)
+
+    # Save raw patch (resize for visualization)
+    patch_img = patch.detach().cpu()
+    patch_img = F.interpolate(patch_img.unsqueeze(0), size=(224,224),
+                              mode="nearest")[0]  # scale up for visibility
+    patch_pil = TF.to_pil_image(patch_img)
+    patch_pil.save("artifacts/patch_visual.png")
+    print("Saved: artifacts/patch_visual.png")
+
+    # Pick one image from TinyImageNet to visualize
+    sample_img, _ = dataset[0]
+    sample_img = sample_img.unsqueeze(0).to(device)
+
+    # Apply patch once (using EOT but fixed position for nicer view)
+    def apply_patch_fixed(img, patch, y0=20, x0=20):
+        img = img.clone()
+        p = patch
+        _, _, P, _ = p.shape
+        img[:, :, y0:y0+P, x0:x0+P] = p
+        return torch.clamp(img, 0, 1)
+
+    # Resize patch to fixed size (e.g., 112x112)
+    p = F.interpolate(patch.unsqueeze(0), size=(112,112), mode="nearest")
+
+    patched = apply_patch_fixed(sample_img, p)
+
+    # Convert to PIL and save
+    patched_pil = TF.to_pil_image(patched[0].cpu())
+    patched_pil.save("artifacts/patched_example.png")
+
+    print("Saved: artifacts/patched_example.png")
+    print("\nVisualization done.")
+
+
+if __name__ == "__main__":
+    main()
 
 
 
