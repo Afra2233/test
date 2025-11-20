@@ -64,12 +64,13 @@ def evaluate_spatial_attack(name, ds, clip_model, device, text_features):
     # Build the attacker
     # max_rotation: degrees
     # max_translation: fraction of image (0.125 means 12.5% shift)
-    attacker = SpatialTransformAttack(
-        predict=lambda x: clip_model.encode_image(x), 
+    from advertorch.attacks import ElasticTransformAttack
+
+    attacker = ElasticTransformAttack(
+        predict=forward_fn,
         loss_fn=torch.nn.CrossEntropyLoss(),
-        max_rotation=30,        # degrees
-        max_translation=0.125,  # fraction of the image dimension
-        num_classes=text_features.shape[0],
+        distortion=0.3,     # 扭曲强度，可调
+        sigma=4,            # 高斯核大小，可调
     )
 
     for images, labels in tqdm(loader, desc=name):
