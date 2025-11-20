@@ -74,16 +74,17 @@ def main():
         transforms.ToTensor(),
     ])
 
-    dataset = datasets.TinyImageNet(
-        root="data",
-        split="train",
-        download=False,  # 你已经手动下载过
+    from torchvision.datasets import ImageFolder
+
+    dataset = ImageFolder(
+        root="data/tiny-imagenet-200/train",   # <— 你的 TinyImageNet 路径
         transform=transform
     )
 
     loader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
     class_names = dataset.classes
-    print(f"TinyImageNet loaded. Total samples = {len(dataset)}")
+    print("Loaded TinyImageNet:", len(dataset), "samples")
+
 
     # --------------------------------------------------------------
     # Build CLIP text features
@@ -150,48 +151,7 @@ def main():
     os.makedirs("artifacts", exist_ok=True)
     np.save("artifacts/universal_patch_tinyimagenet.npy", patch.detach().cpu().numpy())
     print("\nSaved patch to artifacts/universal_patch_tinyimagenet.npy\n")
-        # --------------------------------------------------------------
-    # 9. Visualize patch and patched image
-    # --------------------------------------------------------------
-    print("Saving patch visualization...")
-
-    import torchvision.transforms.functional as TF
-    from PIL import Image
-
-    os.makedirs("artifacts", exist_ok=True)
-
-    # Save raw patch (resize for visualization)
-    patch_img = patch.detach().cpu()
-    patch_img = F.interpolate(patch_img.unsqueeze(0), size=(224,224),
-                              mode="nearest")[0]  # scale up for visibility
-    patch_pil = TF.to_pil_image(patch_img)
-    patch_pil.save("artifacts/patch_visual.png")
-    print("Saved: artifacts/patch_visual.png")
-
-    # Pick one image from TinyImageNet to visualize
-    sample_img, _ = dataset[0]
-    sample_img = sample_img.unsqueeze(0).to(device)
-
-    # Apply patch once (using EOT but fixed position for nicer view)
-    def apply_patch_fixed(img, patch, y0=20, x0=20):
-        img = img.clone()
-        p = patch
-        _, _, P, _ = p.shape
-        img[:, :, y0:y0+P, x0:x0+P] = p
-        return torch.clamp(img, 0, 1)
-
-    # Resize patch to fixed size (e.g., 112x112)
-    p = F.interpolate(patch.unsqueeze(0), size=(112,112), mode="nearest")
-
-    patched = apply_patch_fixed(sample_img, p)
-
-    # Convert to PIL and save
-    patched_pil = TF.to_pil_image(patched[0].cpu())
-    patched_pil.save("artifacts/patched_example.png")
-
-    print("Saved: artifacts/patched_example.png")
-    print("\nVisualization done.")
-
+    
 
 if __name__ == "__main__":
     main()
