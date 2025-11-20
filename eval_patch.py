@@ -48,7 +48,7 @@ def get_class_list(name, ds):
 
     # Pets — torchvision uses internal attribute "_classes"
     if name == "pets":
-        return ds._classes
+        return ds.classes
 
     # Food101 — OK
     if name == "food101":
