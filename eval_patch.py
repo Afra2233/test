@@ -156,7 +156,7 @@ def main():
     print("[DEBUG] CLIP loaded", flush=True)
 
     # Load patch
-    patch_np = np.load("artifacts/universal_patch_tinyimagenet.npy")
+    patch_np = np.load("artifacts/patch_resnet50_tinyimagenet.npy")
     print("[DEBUG] Patch loaded", flush=True)
 
     # Common transform
