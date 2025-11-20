@@ -150,8 +150,40 @@ def main():
     # --------------------------------------------------------------
     os.makedirs("artifacts", exist_ok=True)
     np.save("artifacts/universal_patch_tinyimagenet.npy", patch.detach().cpu().numpy())
-    print("\nSaved patch to artifacts/universal_patch_tinyimagenet.npy\n")
+    print("\nSaved patch to artifacts/universal_patch_tinyimagenet_2.npy\n")
     
+
+    # 1) Save the raw patch scaled to 224x224 (for visibility)
+    patch_img = patch.detach().cpu().clone()  # [3, P, P]
+    patch_vis = F.interpolate(
+        patch_img.unsqueeze(0),
+        size=(224, 224),
+        mode="nearest"
+    )[0]
+    patch_pil = TF.to_pil_image(patch_vis)
+    patch_pil.save("artifacts/patch_visual.png")
+    print("Saved patch image to artifacts/patch_visual.png")
+
+    # 2) Save one example image with patch applied
+    # Take the first sample in the dataset
+    sample_img, _ = dataset[0]  # dataset is TinyImageNet train
+    sample_img = sample_img.unsqueeze(0).to(device)  # [1,3,224,224]
+
+    # Resize patch to a fixed size for visualization
+    p = F.interpolate(patch.unsqueeze(0), size=(112, 112), mode="nearest")
+
+    # Fixed position (easier to visualize): top-left corner
+    def apply_patch_fixed(img, patch_tensor, y=10, x=10):
+        img = img.clone()
+        _, _, ph, pw = patch_tensor.shape
+        img[:, :, y:y+ph, x:x+pw] = patch_tensor
+        return torch.clamp(img, 0, 1)
+
+    patched_img = apply_patch_fixed(sample_img, p)
+
+    patched_pil = TF.to_pil_image(patched_img[0].cpu())
+    patched_pil.save("artifacts/patched_example.png")
+    print("Saved sample with patch to artifacts/patched_example.png\n")
 
 if __name__ == "__main__":
     main()
