@@ -9,6 +9,7 @@ import clip
 import numpy as np
 import random
 from tqdm import tqdm
+import torchvision.transforms.functional as TF
 
 
 # -----------------------------------------------------------
