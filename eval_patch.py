@@ -6,7 +6,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from torchvision import transforms
-from torchvision.datasets import CIFAR10, Flowers102, Food101, DTD, OxfordIIITPet
+from torchvision.datasets import CIFAR10, CIFAR100, Flowers102, Food101, DTD, OxfordIIITPet
 from torch.utils.data import DataLoader
 import clip
 
@@ -83,31 +83,53 @@ def evaluate_dataset(name, ds, clip_model, device, patch_np, text_features):
     clean_correct = 0
     patch_correct = 0
 
+    # 用于 ASR 计算：只统计 clean 正确 & patch 错误 的数量
+    attack_success = 0
+    clean_total = 0
+
     print(f"\n===== Evaluating {name} =====")
 
-    # tqdm 自动显示 ETA
     for images, labels in tqdm(loader, desc=f"{name}", ncols=120):
         images = images.to(device)
         labels = labels.to(device)
 
-        # ---------- clean ----------
+        # ----- clean predictions -----
         with torch.no_grad():
             f = clip_model.encode_image(images)
             f = f / f.norm(dim=-1, keepdim=True)
             logits = 100 * f @ text_features.T
-        clean_correct += (logits.argmax(1) == labels).sum().item()
+        preds_clean = logits.argmax(1)
+        clean_correct_batch = (preds_clean == labels)
 
-        # ---------- patched ----------
+        clean_correct += clean_correct_batch.sum().item()
+
+        # only these will be counted in ASR denominator
+        clean_total += clean_correct_batch.sum().item()
+
+        # ----- patched images -----
         patched = apply_patch_torch(images, patch_np, device)
         with torch.no_grad():
             f2 = clip_model.encode_image(patched)
             f2 = f2 / f2.norm(dim=-1, keepdim=True)
             logits2 = 100 * f2 @ text_features.T
-        patch_correct += (logits2.argmax(1) == labels).sum().item()
+        preds_patch = logits2.argmax(1)
+
+        patch_correct += (preds_patch == labels).sum().item()
+
+        # ----- ASR counting -----
+        # clean correct AND patch wrong
+        attack_success += ((preds_clean == labels) & (preds_patch != labels)).sum().item()
 
         total += labels.size(0)
 
-    print(f"{name}: clean={clean_correct/total:.4f} | patched={patch_correct/total:.4f}\n")
+    clean_acc = clean_correct / total
+    patch_acc = patch_correct / total
+    asr = attack_success / clean_total if clean_total > 0 else 0.0
+
+    print(f"{name}: clean={clean_acc:.4f} | patched={patch_acc:.4f} | ASR={asr:.4f}\n")
+
+    # return ASR if you want to store it externally
+    return clean_acc, patch_acc, asr
 
 
 # ======================================================
