@@ -22,6 +22,6 @@ cd /scratch/hpc/07/zhang303/test
 #     --max_iter 300
 
 #     #     --load-resnet ./work/resnet50_cifar100.pth 
-# srun python train_and_eval_patch.py
-srun python eval_patch.py
+srun python train_and_eval_patch.py
+# srun python eval_patch.py
 # srun python download_tinyimagenet.py
