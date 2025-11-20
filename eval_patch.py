@@ -32,8 +32,9 @@ def get_class_list(name, ds):
     """Return class names for each dataset"""
 
     # CIFAR10 — OK
-    if name == "cifar10":
-        return ds.classes
+    if name in ["cifar10", "cifar100"]:
+            return ds.classes
+
 
     # Flowers102 — torchvision does NOT provide class names
     if name == "flowers102":
@@ -53,6 +54,9 @@ def get_class_list(name, ds):
     # Food101 — OK
     if name == "food101":
         return ds.classes
+    
+    if name == "stanford_cars":
+        return ds.class_names
 
     raise RuntimeError(f"[FATAL] Unknown dataset: {name}")
 
@@ -60,7 +64,7 @@ def get_class_list(name, ds):
 # ------------------------------------------------
 # build CLIP text features
 # ------------------------------------------------
-def build_text_features(class_names, clip_model, device):
+def build_text_features(class_names, clip_model, device): if name in ["cifar10",
     prompts = [f"a photo of a {c.replace('_',' ')}" for c in class_names]
     tokens = clip.tokenize(prompts).to(device)
     with torch.no_grad():
@@ -139,6 +143,9 @@ def main():
         # "dtd": DTD(f"{DATA_ROOT}/dtd", split="test", download=True, transform=transform),
         "pets": OxfordIIITPet(f"{DATA_ROOT}/pets", split="test", download=True, transform=transform),
         "food101": Food101(f"{DATA_ROOT}/food", split="test", download=True, transform=transform),
+        "cifar100": CIFAR100(f"{DATA_ROOT}/cifar100", train=False, download=True, transform=transform),
+        "stanford_cars": StanfordCars(f"{DATA_ROOT}/stanford_cars", split="test", download=True, transform=transform),
+
     }
 
     print("[DEBUG] All datasets loaded", flush=True)
