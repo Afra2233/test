@@ -23,5 +23,6 @@ cd /scratch/hpc/07/zhang303/test
 
 #     #     --load-resnet ./work/resnet50_cifar100.pth 
 # srun python train_and_eval_patch.py
-srun python eval_patch.py
+# srun python eval_patch.py
 # srun python download_tinyimagenet.py
+srun python run_spatial_attack_clip.py
