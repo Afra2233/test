@@ -10,7 +10,10 @@ from torchvision.datasets import CIFAR10, CIFAR100, Flowers102, Food101, DTD, Ox
 from torch.utils.data import DataLoader
 import clip
 
-from torchvision.datasets import StanfordCars
+from torchvision.datasets import STL10
+from torchvision.datasets import PCAM
+from torchvision.datasets import FGVCAircraft
+
 # ------------------------------------------------
 # apply patch using PyTorch
 # ------------------------------------------------
@@ -55,8 +58,15 @@ def get_class_list(name, ds):
     if name == "food101":
         return ds.classes
     
-    if name == "stanford_cars":
-        return ds.class_names
+    if name == "pcam":
+        return ["tumor", "normal"]   # PCAM 是 2 类
+
+    if name == "fgvc_aircraft":
+        return ds.classes  # torchvision 自带 class names
+
+    if name == "stl10":
+        return ds.classes  # STL10 有 10 个固定类
+    
 
     raise RuntimeError(f"[FATAL] Unknown dataset: {name}")
 
@@ -167,8 +177,15 @@ def main():
         "pets": OxfordIIITPet(f"{DATA_ROOT}/pets", split="test", download=True, transform=transform),
         "food101": Food101(f"{DATA_ROOT}/food", split="test", download=True, transform=transform),
         "cifar100": CIFAR100(f"{DATA_ROOT}/cifar100", train=False, download=True, transform=transform),
-        "stanford_cars": StanfordCars(f"{DATA_ROOT}/stanford_cars", split="test", download=True, transform=transform),
+        # "stanford_cars": StanfordCars(f"{DATA_ROOT}/stanford_cars", split="test", download=True, transform=transform),
+        "pcam": PCAM(f"{DATA_ROOT}/pcam", split="test",
+                 download=True, transform=transform),
 
+        "fgvc_aircraft": FGVCAircraft(f"{DATA_ROOT}/fgvc_aircraft", split="test",
+                                    download=True, transform=transform),
+
+        "stl10": STL10(f"{DATA_ROOT}/stl10", split="test",
+                    download=True, transform=transform),
     }
 
     print("[DEBUG] All datasets loaded", flush=True)
