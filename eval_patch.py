@@ -10,7 +10,7 @@ from torchvision.datasets import CIFAR10, CIFAR100, Flowers102, Food101, DTD, Ox
 from torch.utils.data import DataLoader
 import clip
 
-
+from torchvision.datasets import StanfordCars
 # ------------------------------------------------
 # apply patch using PyTorch
 # ------------------------------------------------
