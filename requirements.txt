@@ -43,3 +43,5 @@ h5py
 foolbox
 git+https://github.com/bethgelab/foolbox
 advertorch
+blackbox-adversarial-toolbo
+git+https://github.com/fra31/auto-attack
