@@ -9,7 +9,7 @@
 module load anaconda3/2022.05 
 source activate stadv
 
-cd /scratch/hpc/07/zhang303/test
+cd /scratch/hpc/07/zhang303/t-backup
 #srun python stadv_clip_food101.py --device cuda --batch-size 16 --steps 20
 # srun python patchclip.py 
 # srun python train_and_eval_patch.py \
