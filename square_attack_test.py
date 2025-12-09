@@ -132,7 +132,7 @@ def evaluate_dataset(name, ds, clip_model, device, text_features, eps=8/255, bs_
 # Main
 # =========================================================
 def main():
-
+    
     print("[DEBUG] Starting evaluation script...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[DEBUG] Device: {device}")
@@ -166,4 +166,5 @@ def main():
 
 
 if __name__ == "__main__":
+    print("start")
     main()
