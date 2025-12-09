@@ -102,12 +102,16 @@ def evaluate_dataset(name, ds, clip_model, device, text_features, eps=8/255, bs_
     )
     adversary.attacks_to_run = ['square']
 
+
     print("[DEBUG] Running attack...")
     x_adv = adversary.run_standard_evaluation(x_test, y_test, bs=bs_aa)
 
     # ---- Metrics ----
     logits_clean = model_aa(x_test)
     logits_adv = model_aa(x_adv)
+    print("logit shape:", model_aa(x_test[:4]).shape)
+    print("mean logits:", model_aa(x_test[:4]).mean().item())
+
 
     preds_clean = logits_clean.argmax(1)
     preds_adv = logits_adv.argmax(1)
@@ -132,7 +136,7 @@ def evaluate_dataset(name, ds, clip_model, device, text_features, eps=8/255, bs_
 # Main
 # =========================================================
 def main():
-    
+
     print("[DEBUG] Starting evaluation script...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[DEBUG] Device: {device}")
@@ -140,10 +144,14 @@ def main():
     # Load CLIP
     clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
     clip_model.eval()
-
+     
     transform = transforms.Compose([
         transforms.Resize((224,224)),
         transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.48145466, 0.4578275, 0.40821073],
+            std=[0.26862954, 0.26130258, 0.27577711]
+        )
     ])
 
     DATA_ROOT = "data"
@@ -162,7 +170,7 @@ def main():
         class_names = get_class_list(name, ds)
         text_features = build_text_features(class_names, clip_model, device)
 
-        evaluate_dataset(name, ds, clip_model, device, text_features, eps=8/255)
+        evaluate_dataset(name, ds, clip_model, device, text_features, eps=1/255)
 
 
 if __name__ == "__main__":
