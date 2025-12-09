@@ -41,9 +41,9 @@ def build_text_features(class_names, clip_model, device):
     prompts = [f"a photo of a {c.replace('_',' ')}" for c in class_names]
     tokens = clip.tokenize(prompts).to(device)
 
-    with torch.no_grad():
-        text_feats = clip_model.encode_text(tokens)
-        text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
+    # with torch.no_grad():
+    text_feats = clip_model.encode_text(tokens)
+    text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
 
     return text_feats
 
