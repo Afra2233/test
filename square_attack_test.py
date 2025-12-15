@@ -171,7 +171,7 @@ def main():
         text_features = build_text_features(class_names, clip_model, device)
 
         # eps in pixel space now (because x in [0,1])
-        evaluate_dataset(name, ds, clip_model, device, text_features, eps=1/255, bs_aa=64)
+        evaluate_dataset(name, ds, clip_model, device, text_features, eps=1/255, bs_aa=16)
 
 
 if __name__ == "__main__":
