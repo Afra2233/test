@@ -125,7 +125,7 @@ def evaluate_dataset(name, ds, clip_model, device, text_features, eps=8/255, bs_
     clean_mask = preds_clean == y_test
     asr = ((preds_adv != y_test) & clean_mask).sum().item() / (clean_mask.sum().item() + 1e-12)
 
-    print(f"\nRESULT — {name}")
+    print(f"\nRESULT: {name}")
     print(f"Clean Accuracy:   {clean_acc:.4f}")
     print(f"Robust Accuracy:  {adv_acc:.4f}")
     print(f"ASR:              {asr:.4f}")
